@@ -1,4 +1,6 @@
-# Watch Twitch Together — a Discord Activity
+# Stream Lurker
+
+A Discord Activity for watching Twitch together.
 
 Everyone in a voice channel watches **one** Twitch stream together. Anyone can add
 channels to a shared queue; server moderators decide what jumps the line. Volume,
