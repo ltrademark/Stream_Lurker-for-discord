@@ -484,17 +484,26 @@
   document.getElementById('t3').onclick = function () {
     log('=== TEST 3  probe URL mappings ===', 'head');
 
+    log('Any "mapped, HTTP 4xx" is FINE — it means the request reached Twitch', 'dim');
+    log('and Twitch declined it. Only "NOT MAPPED" needs fixing.', 'dim');
+
     var probes = [
-      // The one that actually gates playback — the player's own code lives here.
+      // These three gate playback.
       ['/.proxy/twitch-assets/assets/', 'assets.twitch.tv  <-- REQUIRED'],
-      ['/.proxy/twitch-player/js/embed/v1.js', 'player.twitch.tv'],
+      ['/.proxy/twitch-player/js/embed/v1.js', 'player.twitch.tv  <-- REQUIRED'],
+      ['/.proxy/twitchcdn/k/', 'k.twitchcdn.net  <-- REQUIRED (bot check)'],
       ['/.proxy/twitch-gql/gql', 'gql.twitch.tv'],
       ['/.proxy/twitch-usher/', 'usher.ttvnw.net'],
       ['/.proxy/twitch-spade/', 'spade.twitch.tv'],
       ['/.proxy/twitch-cdn/jtv_user_pictures/', 'static-cdn.jtvnw.net'],
-      ['/.proxy/ttvnw/video-weaver/', '{subdomain}.ttvnw.net'],
       ['/.proxy/tw/countess/', '{subdomain}.twitch.tv'],
       ['/.proxy/jtv/static-cdn/', '{subdomain}.jtvnw.net'],
+      // Single-label wildcard, as a control for the next one.
+      ['/.proxy/ttvnw/usher/', 'usher via wildcard (one label)'],
+      // The question I have been assuming the answer to: video segments come
+      // from hosts like video-weaver.iad02.hls.ttvnw.net. If Discord's
+      // {subdomain} parameter will not span dots, no mapping can reach them.
+      ['/.proxy/ttvnw/video-weaver.iad02.hls/', 'DOTTED subdomain — spans dots?'],
     ];
 
     var i = 0;
