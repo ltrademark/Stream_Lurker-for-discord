@@ -133,7 +133,11 @@ export function shimSource() {
   });
 
   function rw(url) {
-    if (typeof url !== 'string') return url;
+    if (typeof url !== 'string' || url === '') return url;
+
+    // Protocol-relative: normalise then fall through to the host rules.
+    if (url.slice(0, 2) === '//') url = 'https:' + url;
+
     for (var i = 0; i < HOST_MAP.length; i++) {
       if (url.indexOf(HOST_MAP[i][0]) === 0) return HOST_MAP[i][1] + url.slice(HOST_MAP[i][0].length);
     }
@@ -141,6 +145,16 @@ export function shimSource() {
       var m = url.match(WILDCARDS[j][0]);
       if (m) return WILDCARDS[j][1] + m[1] + url.slice(m[0].length);
     }
+
+    // Root-relative paths. A <base href> cannot help here: anything starting
+    // with "/" resolves against the origin and ignores base entirely. This
+    // document was authored to live at player.twitch.tv, so every root-relative
+    // path in it belongs to that origin — Kasada's /<uuid>/<uuid>/mfc among
+    // them. Paths we already proxied are left alone.
+    if (url.charAt(0) === '/' && url.indexOf('/.proxy/') !== 0) {
+      return '/.proxy/twitch-player' + url;
+    }
+
     return url;
   }
 
