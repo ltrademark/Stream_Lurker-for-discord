@@ -49,6 +49,23 @@ const server = createServer(async (req, res) => {
   }
 
   console.log(`[spike] unmapped request reached our server: ${req.method} ${path}`);
+
+  // A request for a Twitch prefix landing here means Discord has no URL mapping
+  // for it. Rather than a silent 404, answer scripts with a tiny module that
+  // reports the missing prefix to the spike page — a missing mapping then names
+  // itself in the log instead of looking like a Twitch failure.
+  const prefix = `/${path.split('/')[1] ?? ''}`;
+  if (TWITCH_PREFIXES.has(prefix) && path.endsWith('.js')) {
+    res.writeHead(200, {
+      'content-type': 'application/javascript; charset=utf-8',
+      'cache-control': 'no-store',
+    });
+    return res.end(
+      `(function(){try{parent.postMessage({__spike:true,kind:'mapping',` +
+        `detail:${JSON.stringify(prefix)}},'*')}catch(e){}})();`,
+    );
+  }
+
   res.writeHead(404, {
     'content-type': 'application/json',
     'cache-control': 'no-store',
@@ -61,6 +78,19 @@ const server = createServer(async (req, res) => {
     }),
   );
 });
+
+/** Prefixes that must be configured as URL Mappings in the Developer Portal. */
+const TWITCH_PREFIXES = new Set([
+  '/twitch-assets',
+  '/twitch-player',
+  '/twitch-gql',
+  '/twitch-usher',
+  '/twitch-spade',
+  '/twitch-cdn',
+  '/ttvnw',
+  '/tw',
+  '/jtv',
+]);
 
 /**
  * Fetches Twitch's player page and rewrites its absolute URLs to proxy paths.

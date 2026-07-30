@@ -388,7 +388,7 @@
         log('PLAYBACK_BLOCKED — autoplay refused, needs a user gesture.', 'warn');
       });
 
-      setTimeout(function () {
+      later(function () {
         if (!ready) {
           log('10s with no READY. Open devtools -> Network and look for failed', 'bad');
           log('requests to gql.twitch.tv / usher.ttvnw.net / *.hls.ttvnw.net.', 'dim');
@@ -439,7 +439,12 @@
     if (nestedSeen[key]) return;
     nestedSeen[key] = true;
 
-    if (d.kind === 'csp') log('NESTED CSP BLOCK  ' + d.detail, 'bad');
+    if (d.kind === 'mapping') {
+      log('*** URL MAPPING MISSING: ' + d.detail + ' ***', 'bad');
+      log('    Add it in Developer Portal -> Activities -> URL Mappings,', 'warn');
+      log('    then fully close and relaunch this activity.', 'warn');
+    }
+    else if (d.kind === 'csp') log('NESTED CSP BLOCK  ' + d.detail, 'bad');
     else if (d.kind === 'loadfail') log('NESTED load failed  ' + d.detail, 'bad');
   });
 
@@ -469,7 +474,7 @@
 
     probeSameOrigin(frame, 'test 4');
 
-    setTimeout(function () {
+    later(function () {
       log('--- 12s mark. Video visible above? That is the pass condition. ---', 'head');
       log('If not, the NESTED lines say which host is still blocked.', 'dim');
     }, 12000);
@@ -533,9 +538,19 @@
     return document.getElementById('channel').value.trim().toLowerCase() || 'twitch';
   }
 
+  // Timers from a previous run would otherwise report against this one.
+  var pending = [];
+  function later(fn, ms) { pending.push(setTimeout(fn, ms)); }
+
   function reset() {
     stage.innerHTML = '';
     t0 = Date.now();
+    pending.forEach(clearTimeout);
+    pending = [];
+    // Cleared per run, or a repeat failure is silently deduped away and the
+    // second run looks like it succeeded.
+    nestedSeen = {};
+    blocked = {};
   }
 
   document.getElementById('clear').onclick = function () {
