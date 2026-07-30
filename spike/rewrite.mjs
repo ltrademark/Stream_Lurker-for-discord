@@ -29,16 +29,29 @@ export const HOST_MAP = [
  * enumerated — countess, trowel, client-event-reporter, and the rotating
  * video-weaver segment hosts.
  */
-export const WILDCARDS = [
-  [/^https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.ttvnw\.net/i, '/.proxy/ttvnw/$1'],
-  [/^https:\/\/([a-z0-9-]+)\.jtvnw\.net/i, '/.proxy/jtv/$1'],
+/**
+ * Wildcard host rules as [regexSource, proxyPrefix] pairs.
+ *
+ * Held as strings on purpose: the shim needs the same rules, and it runs inside
+ * the player document as generated source. Keeping one table that both sides
+ * compile means a host added here cannot go missing there — which is exactly
+ * how the Kasada script stayed blocked after being "fixed".
+ */
+export const WILDCARD_SPECS = [
+  ['^https://([a-z0-9-]+(?:\\.[a-z0-9-]+)*)\\.ttvnw\\.net', '/.proxy/ttvnw/'],
+  ['^https://([a-z0-9-]+)\\.jtvnw\\.net', '/.proxy/jtv/'],
   // k.twitchcdn.net serves Kasada bot detection. Twitch gates playback on it,
   // so blocking it is not cosmetic.
-  [/^https:\/\/([a-z0-9-]+)\.twitchcdn\.net/i, '/.proxy/twitchcdn/$1'],
+  ['^https://([a-z0-9-]+)\\.twitchcdn\\.net', '/.proxy/twitchcdn/'],
   // www/m/passport are human-facing pages, not assets. Proxying them would
   // send "watch on Twitch" clicks into the sandbox instead of a real browser.
-  [/^https:\/\/(?!www\.|m\.|passport\.)([a-z0-9-]+)\.twitch\.tv/i, '/.proxy/tw/$1'],
+  ['^https://(?!www\\.|m\\.|passport\\.)([a-z0-9-]+)\\.twitch\\.tv', '/.proxy/tw/'],
 ];
+
+export const WILDCARDS = WILDCARD_SPECS.map(([source, prefix]) => [
+  new RegExp(source, 'i'),
+  prefix,
+]);
 
 /** Rewrites a single absolute URL. Returns it unchanged if nothing matches. */
 export function rewriteUrl(url) {
@@ -47,9 +60,9 @@ export function rewriteUrl(url) {
   for (const [from, to] of HOST_MAP) {
     if (url.startsWith(from)) return to + url.slice(from.length);
   }
-  for (const [re, to] of WILDCARDS) {
+  for (const [re, prefix] of WILDCARDS) {
     const match = url.match(re);
-    if (match) return url.replace(re, to.replace('$1', match[1]));
+    if (match) return prefix + match[1] + url.slice(match[0].length);
   }
   return url;
 }
@@ -113,11 +126,11 @@ export function rewriteCss(css) {
 export function shimSource() {
   return `(function () {
   var HOST_MAP = ${JSON.stringify(HOST_MAP)};
-  var WILDCARDS = [
-    [/^https:\\/\\/([a-z0-9-]+(?:\\.[a-z0-9-]+)*)\\.ttvnw\\.net/i, '/.proxy/ttvnw/'],
-    [/^https:\\/\\/([a-z0-9-]+)\\.jtvnw\\.net/i, '/.proxy/jtv/'],
-    [/^https:\\/\\/(?!www\\.|m\\.|passport\\.)([a-z0-9-]+)\\.twitch\\.tv/i, '/.proxy/tw/']
-  ];
+  // Compiled from the same WILDCARD_SPECS the server uses, so the two tables
+  // cannot drift apart.
+  var WILDCARDS = ${JSON.stringify(WILDCARD_SPECS)}.map(function (spec) {
+    return [new RegExp(spec[0], 'i'), spec[1]];
+  });
 
   function rw(url) {
     if (typeof url !== 'string') return url;
