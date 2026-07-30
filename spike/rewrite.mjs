@@ -205,20 +205,39 @@ export function shimSource() {
     if (e.target && e.target.tagName) report('loadfail', e.target.src || e.target.href);
   }, true);
 
+  // A 4xx/5xx does not fire an error event, so without this a failing request
+  // is completely silent — which is how the last round looked "clean" while
+  // still not playing.
+  function watch(url, status) {
+    if (status >= 400) report('http', status + ' ' + url);
+  }
+
   var nativeFetch = window.fetch;
   window.fetch = function (input, init) {
-    if (typeof input === 'string') return nativeFetch.call(this, rw(input), init);
-    if (input && typeof input.url === 'string') {
-      var next = rw(input.url);
-      if (next !== input.url) return nativeFetch.call(this, new Request(next, input), init);
-    }
-    return nativeFetch.call(this, input, init);
+    var target = typeof input === 'string' ? rw(input)
+               : (input && typeof input.url === 'string' ? rw(input.url) : null);
+
+    var promise;
+    if (typeof input === 'string') promise = nativeFetch.call(this, target, init);
+    else if (target && target !== input.url) promise = nativeFetch.call(this, new Request(target, input), init);
+    else promise = nativeFetch.call(this, input, init);
+
+    return promise.then(function (res) {
+      watch(target || (input && input.url) || '?', res.status);
+      return res;
+    }, function (err) {
+      report('neterr', (target || '?') + ' — ' + err.message);
+      throw err;
+    });
   };
 
   var open = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url) {
     var args = Array.prototype.slice.call(arguments);
-    args[1] = rw(String(url));
+    var target = rw(String(url));
+    args[1] = target;
+    this.addEventListener('load', function () { watch(target, this.status); });
+    this.addEventListener('error', function () { report('neterr', target + ' — XHR error'); });
     return open.apply(this, args);
   };
 
@@ -276,6 +295,21 @@ export function shimSource() {
   if (navigator.sendBeacon) {
     var beacon = navigator.sendBeacon.bind(navigator);
     navigator.sendBeacon = function (url, data) { return beacon(rw(String(url)), data); };
+  }
+
+  // Does an inline <script> run at all in here? Discord's CSP carries a nonce
+  // and no 'unsafe-inline', so Twitch's un-nonced inline bootstrap scripts may
+  // be silently dropped — which would leave the app shell rendering while the
+  // config telling it which channel to play never arrives. The server injects a
+  // marker inline script right after this one; if the flag is missing, inline
+  // execution is blocked and that is the whole problem.
+  function checkInline() {
+    report('inline', window.__spikeInlineRan === true ? 'INLINE SCRIPTS RUN' : 'INLINE SCRIPTS BLOCKED');
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', checkInline);
+  } else {
+    checkInline();
   }
 
   report('shim', 'installed at ' + location.href);

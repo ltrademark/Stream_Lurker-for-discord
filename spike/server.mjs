@@ -143,9 +143,13 @@ async function serveEmbed(url, req, res) {
     //
     // Then the shim, so it patches fetch/XHR/src before anything uses them.
     // Its own src is root-relative, so <base> does not affect it.
+    // The marker inline script proves whether inline execution works at all in
+    // here. Discord's CSP carries a nonce and no 'unsafe-inline', so Twitch's
+    // own un-nonced inline scripts may be dropped without a trace.
     const inject =
       `<base href="/.proxy/twitch-player/">` +
-      `<script src="/.proxy/twitch-shim.js"></script>`;
+      `<script src="/.proxy/twitch-shim.js"></script>` +
+      `<script>window.__spikeInlineRan=true</script>`;
     if (/<head[^>]*>/i.test(html)) {
       html = html.replace(/<head([^>]*)>/i, `<head$1>${inject}`);
     } else {
