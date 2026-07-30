@@ -500,10 +500,15 @@
       ['/.proxy/jtv/static-cdn/', '{subdomain}.jtvnw.net'],
       // Single-label wildcard, as a control for the next one.
       ['/.proxy/ttvnw/usher/', 'usher via wildcard (one label)'],
-      // The question I have been assuming the answer to: video segments come
-      // from hosts like video-weaver.iad02.hls.ttvnw.net. If Discord's
-      // {subdomain} parameter will not span dots, no mapping can reach them.
-      ['/.proxy/ttvnw/video-weaver.iad02.hls/', 'DOTTED subdomain — spans dots?'],
+      // Established: {subdomain} does not span dots, so this fails.
+      ['/.proxy/ttvnw/video-weaver.iad02.hls/', 'dotted subdomain (known to fail)'],
+      // The two escapes. Video segments live on multi-label hosts, so the
+      // parameter has to sit INSIDE the hostname where each one stays a single
+      // label. If either of these maps, segments are reachable and this whole
+      // approach works. If neither does, video can only be relayed through the
+      // host machine, which costs real upload bandwidth per viewer.
+      ['/.proxy/vw/iad02/', 'video-weaver.{pop}.hls.ttvnw.net  <-- ESCAPE 1'],
+      ['/.proxy/ttvnw3/video-weaver/iad02/hls/', '{a}.{b}.{c}.ttvnw.net  <-- ESCAPE 2'],
     ];
 
     var i = 0;
