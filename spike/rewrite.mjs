@@ -25,20 +25,43 @@ export const HOST_MAP = [
 ];
 
 /**
- * Wildcard fallbacks for hosts the player reaches at runtime that we haven't
- * enumerated — countess, trowel, client-event-reporter, and the rotating
- * video-weaver segment hosts.
+ * Matches the variable part of a *.ttvnw.net host, however many labels it has.
+ * Kept separate from WILDCARD_SPECS because these need label-splitting, not a
+ * flat prefix — see ttvnwPath.
  */
+export const TTVNW_SOURCE = '^https://([a-z0-9-]+(?:\\.[a-z0-9-]+)*)\\.ttvnw\\.net';
+
 /**
- * Wildcard host rules as [regexSource, proxyPrefix] pairs.
+ * Builds the proxy path for a *.ttvnw.net host.
  *
- * Held as strings on purpose: the shim needs the same rules, and it runs inside
- * the player document as generated source. Keeping one table that both sides
- * compile means a host added here cannot go missing there — which is exactly
- * how the Kasada script stayed blocked after being "fixed".
+ * Discord's {parameter} matches a single label and will not span dots, proven
+ * with a control: /ttvnw/usher maps, /ttvnw/video-weaver.iad02.hls does not.
+ * Video segments live on 3- and 4-label hosts, so each label gets its own
+ * parameter and the mapping is chosen by label count:
+ *
+ *   usher.ttvnw.net                    -> /.proxy/ttvnw/usher
+ *   video-weaver.iad02.hls.ttvnw.net   -> /.proxy/ttvnw3/video-weaver/iad02/hls
+ *   video-edge-x.iad02.abs.hls.ttvnw…  -> /.proxy/ttvnw4/video-edge-x/iad02/abs/hls
+ *
+ * Defined as a plain function with no outer references so shimSource() can
+ * serialise it and both sides stay in step.
+ */
+export function ttvnwPath(labelsStr) {
+  var labels = labelsStr.split('.');
+  var suffix = labels.length === 1 ? '' : String(labels.length);
+  return '/.proxy/ttvnw' + suffix + '/' + labels.join('/');
+}
+
+/**
+ * Flat wildcard rules as [regexSource, proxyPrefix] pairs, for hosts whose
+ * variable part is always a single label.
+ *
+ * Held as strings on purpose: the shim needs the same rules and runs inside the
+ * player document as generated source. One table both sides compile means a
+ * host added here cannot go missing there — which is exactly how the Kasada
+ * script stayed blocked after being "fixed" once already.
  */
 export const WILDCARD_SPECS = [
-  ['^https://([a-z0-9-]+(?:\\.[a-z0-9-]+)*)\\.ttvnw\\.net', '/.proxy/ttvnw/'],
   ['^https://([a-z0-9-]+)\\.jtvnw\\.net', '/.proxy/jtv/'],
   // k.twitchcdn.net serves Kasada bot detection. Twitch gates playback on it,
   // so blocking it is not cosmetic.
@@ -53,6 +76,8 @@ export const WILDCARDS = WILDCARD_SPECS.map(([source, prefix]) => [
   prefix,
 ]);
 
+const TTVNW_RE = new RegExp(TTVNW_SOURCE, 'i');
+
 /** Rewrites a single absolute URL. Returns it unchanged if nothing matches. */
 export function rewriteUrl(url) {
   if (typeof url !== 'string') return url;
@@ -60,6 +85,10 @@ export function rewriteUrl(url) {
   for (const [from, to] of HOST_MAP) {
     if (url.startsWith(from)) return to + url.slice(from.length);
   }
+
+  const ttvnw = url.match(TTVNW_RE);
+  if (ttvnw) return ttvnwPath(ttvnw[1]) + url.slice(ttvnw[0].length);
+
   for (const [re, prefix] of WILDCARDS) {
     const match = url.match(re);
     if (match) return prefix + match[1] + url.slice(match[0].length);
@@ -92,7 +121,7 @@ export function rewriteHtml(html) {
   }
 
   out = out
-    .replace(/https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.ttvnw\.net/gi, '/.proxy/ttvnw/$1')
+    .replace(/https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.ttvnw\.net/gi, (_m, labels) => ttvnwPath(labels))
     .replace(/https:\/\/([a-z0-9-]+)\.jtvnw\.net/gi, '/.proxy/jtv/$1')
     .replace(/https:\/\/([a-z0-9-]+)\.twitchcdn\.net/gi, '/.proxy/twitchcdn/$1')
     // Skip www/m/passport: those are human-facing links, not assets, and
@@ -113,7 +142,7 @@ export function rewriteCss(css) {
   }
   return out
     .replace(/https:\/\/assets\.twitch\.tv/gi, '/.proxy/twitch-assets')
-    .replace(/https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.ttvnw\.net/gi, '/.proxy/ttvnw/$1')
+    .replace(/https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*)\.ttvnw\.net/gi, (_m, labels) => ttvnwPath(labels))
     .replace(/https:\/\/([a-z0-9-]+)\.jtvnw\.net/gi, '/.proxy/jtv/$1')
     .replace(/https:\/\/([a-z0-9-]+)\.twitchcdn\.net/gi, '/.proxy/twitchcdn/$1');
 }
@@ -126,6 +155,8 @@ export function rewriteCss(css) {
 export function shimSource() {
   return `(function () {
   var HOST_MAP = ${JSON.stringify(HOST_MAP)};
+  var TTVNW_RE = new RegExp(${JSON.stringify(TTVNW_SOURCE)}, 'i');
+  ${ttvnwPath.toString()}
   // Compiled from the same WILDCARD_SPECS the server uses, so the two tables
   // cannot drift apart.
   var WILDCARDS = ${JSON.stringify(WILDCARD_SPECS)}.map(function (spec) {
@@ -141,6 +172,9 @@ export function shimSource() {
     for (var i = 0; i < HOST_MAP.length; i++) {
       if (url.indexOf(HOST_MAP[i][0]) === 0) return HOST_MAP[i][1] + url.slice(HOST_MAP[i][0].length);
     }
+    var tt = url.match(TTVNW_RE);
+    if (tt) return ttvnwPath(tt[1]) + url.slice(tt[0].length);
+
     for (var j = 0; j < WILDCARDS.length; j++) {
       var m = url.match(WILDCARDS[j][0]);
       if (m) return WILDCARDS[j][1] + m[1] + url.slice(m[0].length);
