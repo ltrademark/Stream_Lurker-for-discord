@@ -132,9 +132,20 @@ async function serveEmbed(url, req, res) {
     const original = await twitch.text();
     let html = rewriteHtml(original);
 
-    // The shim must be the first script in the document so it is installed
-    // before any of Twitch's own code executes.
-    const inject = `<script src="/.proxy/twitch-shim.js"></script>`;
+    // Two things must go in before any of Twitch's own code runs.
+    //
+    // <base> first, and this one is easy to miss: we serve this document at
+    // /.proxy/twitch-embed, but it was authored to live at player.twitch.tv/.
+    // Every relative URL in it — Kasada's fp and mfc endpoints among them —
+    // would otherwise resolve against /.proxy/ and fall through to this server
+    // as a 404. Pointing base at the mapped player prefix restores the
+    // resolution Twitch's code expects.
+    //
+    // Then the shim, so it patches fetch/XHR/src before anything uses them.
+    // Its own src is root-relative, so <base> does not affect it.
+    const inject =
+      `<base href="/.proxy/twitch-player/">` +
+      `<script src="/.proxy/twitch-shim.js"></script>`;
     if (/<head[^>]*>/i.test(html)) {
       html = html.replace(/<head([^>]*)>/i, `<head$1>${inject}`);
     } else {
