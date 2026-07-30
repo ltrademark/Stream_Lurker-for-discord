@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Twitch sandbox spike</title>
+<style>
+  :root {
+    --bg: #000; --surface: #0e0e10; --surface-2: #18181b; --border: #2a2a2d;
+    --purple: #9147ff; --text: #efeff1; --muted: #adadb8;
+    --ok: #00f593; --bad: #eb0400; --warn: #ffb700;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 12px;
+  }
+  h1 { font-size: 14px; margin: 0 0 4px; }
+  h1 span { color: var(--purple); }
+  .meta { color: var(--muted); font-size: 11px; margin-bottom: 10px; word-break: break-all; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
+  button, input {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 10px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--purple); }
+  button.primary { background: var(--purple); border-color: var(--purple); font-weight: 600; }
+  #stage {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    min-height: 260px; margin-bottom: 10px; position: relative; overflow: hidden;
+  }
+  #stage iframe { display: block; border: 0; width: 100%; height: 360px; }
+  #log {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px; height: 240px; overflow: auto; white-space: pre-wrap; font-size: 11px;
+  }
+  .l-ok { color: var(--ok); } .l-bad { color: var(--bad); }
+  .l-warn { color: var(--warn); } .l-dim { color: var(--muted); }
+  h2 { font-size: 12px; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+</style>
+</head>
+<body>
+
+<h1>Twitch <span>&times;</span> Discord Activity sandbox spike</h1>
+<div class="meta" id="env"></div>
+
+<div class="row">
+  <input id="channel" value="xqc" size="14" aria-label="Twitch channel" />
+  <button class="primary" id="t1">1. Twitch.Player JS API</button>
+  <button id="t2">2. Direct nested iframe</button>
+  <button id="t3">3. Probe mappings</button>
+  <button id="clear">Clear</button>
+  <button id="copy">Copy log</button>
+</div>
+
+<div id="stage"></div>
+
+<h2>Log</h2>
+<div id="log"></div>
+
+<script>
+(function () {
+  const logEl = document.getElementById('log');
+  const stage = document.getElementById('stage');
+  const lines = [];
+  let t0 = Date.now();
+
+  function log(msg, cls) {
+    const stamp = String(Date.now() - t0).padStart(5, ' ');
+    const line = stamp + 'ms  ' + msg;
+    lines.push(line);
+    const div = document.createElement('div');
+    if (cls) div.className = 'l-' + cls;
+    div.textContent = line;
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // --- environment ---------------------------------------------------------
+  const host = location.hostname;
+  const isProxied = /\.discordsays\.com$/.test(host);
+  // Inside Discord the host IS <app_id>.discordsays.com, so parent comes free.
+  const parents = isProxied ? [host, 'discord.com'] : [host];
+
+  document.getElementById('env').textContent =
+    'origin=' + location.origin +
+    '  |  proxied=' + isProxied +
+    '  |  parent=[' + parents.join(', ') + ']';
+
+  if (!isProxied) {
+    log('NOT running behind the Discord proxy. Open this from the rocket button', 'warn');
+    log('in a voice channel — the sandbox only exists inside Discord.', 'warn');
+  }
+
+  // --- CSP violation capture ----------------------------------------------
+  // Only fires for violations in THIS document. Violations inside a nested
+  // Twitch document cannot reach us — for those, read the devtools console
+  // and Network tab directly.
+  const blocked = new Set();
+  document.addEventListener('securitypolicyviolation', function (e) {
+    let origin = e.blockedURI;
+    try { origin = new URL(e.blockedURI).origin; } catch (_) {}
+    const key = e.violatedDirective + ' ' + origin;
+    if (!blocked.has(key)) {
+      blocked.add(key);
+      log('CSP BLOCK  ' + e.violatedDirective + '  ->  ' + origin, 'bad');
+    }
+  });
+
+  window.addEventListener('error', function (e) {
+    if (e.target && e.target.tagName) {
+      log('load failed: <' + e.target.tagName.toLowerCase() + '> ' +
+          (e.target.src || e.target.href), 'bad');
+    }
+  }, true);
+
+  // --- candidate paths ----------------------------------------------------
+  // The docs disagree on whether /.proxy is required, so try both spellings.
+  const PLAYER_SCRIPT_PATHS = [
+    '/.proxy/twitch-player/js/embed/v1.js',
+    '/twitch-player/js/embed/v1.js',
+  ];
+  const PLAYER_PAGE_PATHS = [
+    '/.proxy/twitch-player/',
+    '/twitch-player/',
+  ];
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = function () { resolve(src); };
+      s.onerror = function () { reject(new Error(src)); };
+      document.head.appendChild(s);
+    });
+  }
+
+  async function loadFirstWorkingScript() {
+    for (const p of PLAYER_SCRIPT_PATHS) {
+      log('trying script ' + p, 'dim');
+      try {
+        await loadScript(p);
+        if (window.Twitch && window.Twitch.Player) {
+          log('script loaded and window.Twitch.Player exists: ' + p, 'ok');
+          return p;
+        }
+        log('script loaded but window.Twitch.Player is missing — probably our', 'warn');
+        log('404 page served as JS. Mapping not applied for this prefix.', 'warn');
+      } catch (err) {
+        log('script blocked or 404: ' + p, 'bad');
+      }
+    }
+    return null;
+  }
+
+  // --- test 1: Twitch.Player JS API ---------------------------------------
+  document.getElementById('t1').onclick = async function () {
+    reset();
+    log('=== TEST 1  Twitch.Player JS API ===');
+    const ok = await loadFirstWorkingScript();
+    if (!ok) {
+      log('FAIL: could not load embed/v1.js through the proxy.', 'bad');
+      log('Check the URL mapping /twitch-player -> player.twitch.tv', 'dim');
+      return;
+    }
+
+    const mount = document.createElement('div');
+    mount.id = 'player-mount';
+    stage.appendChild(mount);
+
+    const channel = channelName();
+    log('constructing Twitch.Player channel=' + channel +
+        ' parent=[' + parents.join(', ') + ']');
+
+    let player;
+    try {
+      player = new window.Twitch.Player('player-mount', {
+        channel: channel,
+        parent: parents,
+        width: '100%',
+        height: 360,
+        muted: true,      // browsers block unmuted autoplay
+        autoplay: true,
+      });
+    } catch (err) {
+      log('constructor threw: ' + err.message, 'bad');
+      return;
+    }
+
+    const P = window.Twitch.Player;
+    let ready = false;
+    player.addEventListener(P.READY, function () {
+      ready = true;
+      log('READY — player initialised', 'ok');
+      try {
+        log('qualities: ' + JSON.stringify(player.getQualities()), 'dim');
+      } catch (err) {
+        log('getQualities() threw: ' + err.message, 'warn');
+      }
+    });
+    player.addEventListener(P.PLAYING, function () {
+      log('PLAYING — video is decoding. THIS IS THE PASS CONDITION.', 'ok');
+      log('Now unmute below and confirm you can hear it.', 'ok');
+      const btn = document.createElement('button');
+      btn.className = 'primary';
+      btn.textContent = 'Unmute + volume 50%';
+      btn.style.cssText = 'position:absolute;top:8px;right:8px;z-index:5';
+      btn.onclick = function () {
+        player.setMuted(false);
+        player.setVolume(0.5);
+        log('setMuted(false) + setVolume(0.5) — muted now ' + player.getMuted(), 'ok');
+      };
+      stage.appendChild(btn);
+    });
+    player.addEventListener(P.OFFLINE, function () {
+      log('OFFLINE — channel is not live. Try a channel that is live.', 'warn');
+    });
+    player.addEventListener(P.PLAYBACK_BLOCKED, function () {
+      log('PLAYBACK_BLOCKED — autoplay refused, needs a user gesture.', 'warn');
+    });
+
+    setTimeout(function () {
+      if (!ready) {
+        log('10s with no READY. The nested Twitch document is probably being', 'bad');
+        log('blocked. Open devtools Network and look for failed requests to', 'dim');
+        log('gql.twitch.tv / usher.ttvnw.net / *.hls.ttvnw.net, then run test 3.', 'dim');
+      }
+    }, 10000);
+  };
+
+  // --- test 2: direct nested iframe ---------------------------------------
+  document.getElementById('t2').onclick = function () {
+    reset();
+    log('=== TEST 2  direct nested iframe ===');
+    const channel = channelName();
+    const qs = 'channel=' + encodeURIComponent(channel) +
+               '&muted=true&autoplay=true' +
+               parents.map(function (p) { return '&parent=' + encodeURIComponent(p); }).join('');
+
+    PLAYER_PAGE_PATHS.forEach(function (base) {
+      const src = base + '?' + qs;
+      log('mounting iframe ' + src, 'dim');
+      const frame = document.createElement('iframe');
+      frame.src = src;
+      frame.allow = 'autoplay; fullscreen';
+      frame.onload = function () { log('iframe onload fired: ' + base, 'ok'); };
+      frame.onerror = function () { log('iframe errored: ' + base, 'bad'); };
+      stage.appendChild(frame);
+    });
+
+    log('onload fires even for an error page — judge by whether video appears.', 'dim');
+  };
+
+  // --- test 3: probe which mappings are live ------------------------------
+  document.getElementById('t3').onclick = async function () {
+    log('=== TEST 3  probe URL mappings ===');
+    const probes = [
+      ['/.proxy/twitch-player/js/embed/v1.js', 'player.twitch.tv'],
+      ['/twitch-player/js/embed/v1.js',        'player.twitch.tv'],
+      ['/.proxy/twitch-gql/gql',               'gql.twitch.tv'],
+      ['/.proxy/twitch-usher/',                'usher.ttvnw.net'],
+      ['/.proxy/twitch-spade/',                'spade.twitch.tv'],
+      ['/.proxy/twitch-cdn/jtv_user_pictures/', 'static-cdn.jtvnw.net'],
+      ['/.proxy/ttvnw/video-weaver/',          '{subdomain}.ttvnw.net'],
+    ];
+
+    for (const [path, target] of probes) {
+      try {
+        const res = await fetch(path, { method: 'GET' });
+        const body = await res.text();
+        let verdict, cls;
+        if (body.includes('reachedOurServer')) {
+          verdict = 'NOT MAPPED (fell through to our server)';
+          cls = 'bad';
+        } else {
+          verdict = 'mapped, HTTP ' + res.status;
+          cls = res.ok ? 'ok' : 'warn';
+        }
+        log(pad(path) + ' -> ' + target + '  ' + verdict, cls);
+      } catch (err) {
+        log(pad(path) + ' -> ' + target + '  BLOCKED (' + err.message + ')', 'bad');
+      }
+    }
+    log('Every prefix you rely on must say "mapped". Longer prefixes must be', 'dim');
+    log('listed ABOVE shorter ones in the Developer Portal.', 'dim');
+  };
+
+  // --- helpers ------------------------------------------------------------
+  function pad(s) { return (s + '                                             ').slice(0, 45); }
+  function channelName() {
+    return document.getElementById('channel').value.trim().toLowerCase() || 'xqc';
+  }
+  function reset() {
+    stage.innerHTML = '';
+    t0 = Date.now();
+  }
+
+  document.getElementById('clear').onclick = function () {
+    logEl.innerHTML = ''; lines.length = 0; blocked.clear(); reset();
+  };
+  document.getElementById('copy').onclick = async function () {
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      log('log copied to clipboard', 'ok');
+    } catch (err) {
+      log('clipboard blocked — select the log text manually', 'warn');
+    }
+  };
+
+  log('ready. Start with test 1.', 'dim');
+})();
+</script>
+</body>
+</html>

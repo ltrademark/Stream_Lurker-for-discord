@@ -1,0 +1,189 @@
+import type { Server } from 'node:http';
+import { WebSocketServer, type WebSocket } from 'ws';
+import { MODERATOR_ONLY, type ClientMessage } from '../../shared/types.js';
+import { parseChannelInput } from '../../shared/twitch.js';
+import { verifySession } from './session.js';
+import { lookupChannel } from './twitch.js';
+import {
+  addToQueue,
+  joinRoom,
+  leaveRoom,
+  playNow,
+  refreshOne,
+  removeFromQueue,
+  reorderQueue,
+  reportOffline,
+  sendError,
+  skip,
+  stop,
+  type Client,
+  type Room,
+} from './rooms.js';
+
+/** A socket that never says hello is not a client. */
+const HELLO_TIMEOUT_MS = 10_000;
+/** Per-socket add budget, refilled continuously. */
+const ADD_LIMIT = 10;
+const ADD_WINDOW_MS = 60_000;
+
+export function attachWebSocketServer(server: Server): WebSocketServer {
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    // The proxy prefix is stripped in index.ts for HTTP, but upgrades bypass
+    // Express middleware, so tolerate both spellings here too.
+    const path = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/^\/\.proxy/, '');
+
+    if (path !== '/ws') {
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+
+  wss.on('connection', (ws: WebSocket) => {
+    let client: Client | null = null;
+    let room: Room | null = null;
+    const addTimes: number[] = [];
+
+    const helloTimer = setTimeout(() => {
+      if (!client) ws.close(4001, 'no hello');
+    }, HELLO_TIMEOUT_MS);
+
+    ws.on('message', (raw) => {
+      let message: ClientMessage;
+      try {
+        message = JSON.parse(String(raw)) as ClientMessage;
+      } catch {
+        return;
+      }
+      if (!message || typeof message.t !== 'string') return;
+
+      // --- handshake -------------------------------------------------------
+      if (message.t === 'hello') {
+        if (client) return;
+
+        const session = verifySession(message.token);
+        if (!session) {
+          ws.close(4003, 'invalid session');
+          return;
+        }
+
+        clearTimeout(helloTimer);
+        client = {
+          ws,
+          userId: session.userId,
+          name: session.name,
+          avatarUrl: session.avatarUrl,
+          isModerator: session.isModerator,
+        };
+        room = joinRoom(session.instanceId, client);
+        console.log(
+          `[ws] ${session.name} joined ${session.instanceId}` +
+            (session.isModerator ? ' (moderator)' : ''),
+        );
+        return;
+      }
+
+      if (!client || !room) {
+        ws.close(4002, 'hello required first');
+        return;
+      }
+
+      // --- authorisation ---------------------------------------------------
+      // The single gate for every mutating command. The client's own idea of
+      // its moderator status is irrelevant; only the signed session counts.
+      if (MODERATOR_ONLY.has(message.t) && !client.isModerator) {
+        sendError(client, 'Only server moderators can do that.');
+        return;
+      }
+
+      void handle(message, client, room, addTimes);
+    });
+
+    ws.on('close', () => {
+      clearTimeout(helloTimer);
+      if (client && room) {
+        console.log(`[ws] ${client.name} left ${room.instanceId}`);
+        leaveRoom(room, client);
+      }
+    });
+
+    ws.on('error', (err) => console.error('[ws] socket error:', err.message));
+  });
+
+  return wss;
+}
+
+async function handle(
+  message: ClientMessage,
+  client: Client,
+  room: Room,
+  addTimes: number[],
+): Promise<void> {
+  switch (message.t) {
+    case 'queue:add': {
+      const now = Date.now();
+      while (addTimes.length > 0 && now - addTimes[0]! > ADD_WINDOW_MS) addTimes.shift();
+      if (addTimes.length >= ADD_LIMIT) {
+        sendError(client, 'Slow down a moment — too many additions.');
+        return;
+      }
+      addTimes.push(now);
+
+      const parsed = parseChannelInput(String(message.input ?? ''));
+      if (!parsed.ok) {
+        sendError(client, parsed.error);
+        return;
+      }
+      const { login } = parsed;
+
+      if (room.current?.login === login || room.queue.some((i) => i.login === login)) {
+        sendError(client, `${login} is already playing or queued.`);
+        return;
+      }
+
+      // undefined means "could not verify" — accept rather than block on it.
+      const meta = await lookupChannel(login);
+      if (meta === null) {
+        sendError(client, `No Twitch channel called “${login}”.`);
+        return;
+      }
+
+      addToQueue(room, client, login, meta ?? null);
+      if (meta === undefined) void refreshOne(room, login);
+      return;
+    }
+
+    case 'queue:remove':
+      if (!removeFromQueue(room, String(message.id))) {
+        sendError(client, 'That entry is no longer in the queue.');
+      }
+      return;
+
+    case 'queue:reorder':
+      if (!reorderQueue(room, String(message.id), Number(message.index))) {
+        sendError(client, 'That entry is no longer in the queue.');
+      }
+      return;
+
+    case 'play:now':
+      if (!playNow(room, String(message.id))) {
+        sendError(client, 'That entry is no longer in the queue.');
+      }
+      return;
+
+    case 'skip':
+      skip(room);
+      return;
+
+    case 'stop':
+      stop(room);
+      return;
+
+    case 'offline':
+      await reportOffline(room, String(message.login));
+      return;
+  }
+}
