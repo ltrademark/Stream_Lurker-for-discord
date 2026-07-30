@@ -480,13 +480,16 @@
     log('=== TEST 3  probe URL mappings ===', 'head');
 
     var probes = [
+      // The one that actually gates playback — the player's own code lives here.
+      ['/.proxy/twitch-assets/assets/', 'assets.twitch.tv  <-- REQUIRED'],
       ['/.proxy/twitch-player/js/embed/v1.js', 'player.twitch.tv'],
-      ['/twitch-player/js/embed/v1.js', 'player.twitch.tv'],
       ['/.proxy/twitch-gql/gql', 'gql.twitch.tv'],
       ['/.proxy/twitch-usher/', 'usher.ttvnw.net'],
       ['/.proxy/twitch-spade/', 'spade.twitch.tv'],
       ['/.proxy/twitch-cdn/jtv_user_pictures/', 'static-cdn.jtvnw.net'],
       ['/.proxy/ttvnw/video-weaver/', '{subdomain}.ttvnw.net'],
+      ['/.proxy/tw/countess/', '{subdomain}.twitch.tv'],
+      ['/.proxy/jtv/static-cdn/', '{subdomain}.jtvnw.net'],
     ];
 
     var i = 0;
