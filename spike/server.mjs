@@ -14,7 +14,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { rewriteHtml, shimSource } from './rewrite.mjs';
+import { rewriteCss, rewriteHtml, shimSource } from './rewrite.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -46,6 +46,10 @@ const server = createServer(async (req, res) => {
 
   if (path === '/twitch-embed') {
     return serveEmbed(url, req, res);
+  }
+
+  if (path === '/twitch-css') {
+    return serveCss(url, req, res);
   }
 
   console.log(`[spike] unmapped request reached our server: ${req.method} ${path}`);
@@ -90,6 +94,7 @@ const TWITCH_PREFIXES = new Set([
   '/ttvnw',
   '/tw',
   '/jtv',
+  '/twitchcdn',
 ]);
 
 /**
@@ -150,6 +155,42 @@ async function serveEmbed(url, req, res) {
     console.error('[spike] embed failed:', err);
     res.writeHead(502, { 'content-type': 'text/plain' });
     res.end(`Could not fetch the Twitch player page: ${err.message}`);
+  }
+}
+
+/**
+ * Fetches one of Twitch's stylesheets and rewrites the absolute URLs inside it.
+ * Only reachable for assets.twitch.tv CSS, so this can't be used as an open
+ * proxy for arbitrary hosts.
+ */
+async function serveCss(url, req, res) {
+  const target = url.searchParams.get('u') ?? '';
+
+  if (!/^https:\/\/assets\.twitch\.tv\/[^\s]+\.css$/i.test(target)) {
+    res.writeHead(400, { 'content-type': 'text/plain' });
+    return res.end('Only assets.twitch.tv stylesheets may be proxied.');
+  }
+
+  try {
+    const upstream = await fetch(target, {
+      headers: { 'user-agent': req.headers['user-agent'] ?? UA },
+    });
+    if (!upstream.ok) {
+      res.writeHead(502, { 'content-type': 'text/plain' });
+      return res.end(`Twitch returned ${upstream.status} for that stylesheet.`);
+    }
+
+    const css = rewriteCss(await upstream.text());
+    res.writeHead(200, {
+      'content-type': 'text/css; charset=utf-8',
+      'cache-control': 'no-store',
+    });
+    res.end(css);
+    console.log(`[spike] css rewritten: ${target.split('/').pop()} (${css.length} bytes)`);
+  } catch (err) {
+    console.error('[spike] css proxy failed:', err);
+    res.writeHead(502, { 'content-type': 'text/plain' });
+    res.end(`Could not fetch that stylesheet: ${err.message}`);
   }
 }
 
