@@ -1,22 +1,31 @@
 /**
- * Milestone 0 spike server. Deliberately dependency-free so it runs before any
- * npm install: node spike/server.mjs
+ * Milestone 0 spike server. Dependency-free: node spike/server.mjs
  *
- * Serves the probe page at / and answers everything else with a loud JSON 404.
- * That 404 is itself a signal — if a request for /twitch-player/... lands here,
- * it means Discord's proxy did NOT apply a URL mapping for that prefix and fell
- * through to the root mapping instead.
+ * Serves:
+ *   /                  the probe page
+ *   /twitch-embed?…    the player HTML, fetched from Twitch and rewritten so
+ *                      every absolute asset URL points at a Discord proxy path
+ *   /twitch-shim.js    the runtime shim injected into that document
+ *   anything else      a loud JSON 404, which is itself a signal — a request
+ *                      landing here means Discord applied no URL mapping for
+ *                      that prefix and fell through to the root mapping
  */
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { rewriteHtml, shimSource } from './rewrite.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  'Chrome/140.0.0.0 Safari/537.36';
+
 const server = createServer(async (req, res) => {
-  const path = new URL(req.url, 'http://localhost').pathname;
+  const url = new URL(req.url, 'http://localhost');
+  const path = url.pathname;
 
   if (path === '/' || path === '/index.html') {
     const html = await readFile(join(here, 'index.html'));
@@ -25,6 +34,18 @@ const server = createServer(async (req, res) => {
       'cache-control': 'no-store',
     });
     return res.end(html);
+  }
+
+  if (path === '/twitch-shim.js') {
+    res.writeHead(200, {
+      'content-type': 'application/javascript; charset=utf-8',
+      'cache-control': 'no-store',
+    });
+    return res.end(shimSource());
+  }
+
+  if (path === '/twitch-embed') {
+    return serveEmbed(url, req, res);
   }
 
   console.log(`[spike] unmapped request reached our server: ${req.method} ${path}`);
@@ -36,12 +57,78 @@ const server = createServer(async (req, res) => {
     JSON.stringify({
       reachedOurServer: true,
       path,
-      hint: 'Discord did not apply a URL mapping for this prefix; it fell through to the root mapping.',
+      hint: 'Discord applied no URL mapping for this prefix; it fell through to the root mapping.',
     }),
   );
 });
 
+/**
+ * Fetches Twitch's player page and rewrites its absolute URLs to proxy paths.
+ *
+ * Only this HTML travels through us — roughly 185 KB, once. Every script and
+ * video segment it then loads goes via Discord's own URL mappings, so the host
+ * machine's upload is not carrying anyone's stream.
+ */
+async function serveEmbed(url, req, res) {
+  const upstream = new URL('https://player.twitch.tv/');
+  // Pass the caller's parameters through verbatim: channel, parent (repeated),
+  // muted, autoplay. Twitch validates parent against the real ancestor origins,
+  // so it has to be the client's list, not something we invent.
+  for (const [key, value] of url.searchParams) {
+    upstream.searchParams.append(key, value);
+  }
+
+  console.log(`[spike] embed -> ${upstream}`);
+
+  try {
+    const twitch = await fetch(upstream, {
+      headers: {
+        'user-agent': req.headers['user-agent'] ?? UA,
+        'accept-language': req.headers['accept-language'] ?? 'en-US,en;q=0.9',
+        accept: 'text/html,application/xhtml+xml',
+      },
+    });
+
+    if (!twitch.ok) {
+      res.writeHead(502, { 'content-type': 'text/plain' });
+      return res.end(`Twitch returned ${twitch.status} for the player page.`);
+    }
+
+    const original = await twitch.text();
+    let html = rewriteHtml(original);
+
+    // The shim must be the first script in the document so it is installed
+    // before any of Twitch's own code executes.
+    const inject = `<script src="/.proxy/twitch-shim.js"></script>`;
+    if (/<head[^>]*>/i.test(html)) {
+      html = html.replace(/<head([^>]*)>/i, `<head$1>${inject}`);
+    } else {
+      html = inject + html;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+    });
+    res.end(html);
+
+    console.log(
+      `[spike] embed served: ${original.length} -> ${html.length} bytes, ` +
+        `${countRewrites(original)} absolute Twitch URLs rewritten`,
+    );
+  } catch (err) {
+    console.error('[spike] embed failed:', err);
+    res.writeHead(502, { 'content-type': 'text/plain' });
+    res.end(`Could not fetch the Twitch player page: ${err.message}`);
+  }
+}
+
+function countRewrites(html) {
+  const matches = html.match(/https:\/\/[a-z0-9-]+\.(twitch\.tv|ttvnw\.net|jtvnw\.net)/gi);
+  return matches ? matches.length : 0;
+}
+
 server.listen(PORT, () => {
   console.log(`[spike] listening on http://localhost:${PORT}`);
-  console.log('[spike] now run: cloudflared tunnel --url http://localhost:' + PORT);
+  console.log(`[spike] tunnel it:  cloudflared tunnel --url http://localhost:${PORT}`);
 });
