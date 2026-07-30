@@ -180,11 +180,23 @@ export function shimSource() {
       if (m) return WILDCARDS[j][1] + m[1] + url.slice(m[0].length);
     }
 
+    // Absolute URLs on our own origin. Kasada composes location.origin + a root
+    // path, so its request arrives already absolute and would otherwise pass
+    // through untouched, landing at the activity root instead of the player
+    // prefix. Same reasoning as the root-relative case below.
+    var selfPrefix = location.origin + '/';
+    if (url.indexOf(selfPrefix) === 0) {
+      var samePath = url.slice(location.origin.length);
+      if (samePath.indexOf('/.proxy/') !== 0) {
+        return location.origin + '/.proxy/twitch-player' + samePath;
+      }
+      return url;
+    }
+
     // Root-relative paths. A <base href> cannot help here: anything starting
     // with "/" resolves against the origin and ignores base entirely. This
     // document was authored to live at player.twitch.tv, so every root-relative
-    // path in it belongs to that origin — Kasada's /<uuid>/<uuid>/mfc among
-    // them. Paths we already proxied are left alone.
+    // path in it belongs to that origin. Paths we already proxied are left alone.
     if (url.charAt(0) === '/' && url.indexOf('/.proxy/') !== 0) {
       return '/.proxy/twitch-player' + url;
     }
