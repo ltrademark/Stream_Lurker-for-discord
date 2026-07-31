@@ -11,9 +11,16 @@ export type Prefs = {
   muted: boolean;
   /** Twitch quality name ('auto', '720p60', …). */
   quality: string;
+  /**
+   * Whether this viewer has unmuted before. Playback must still start muted —
+   * browsers refuse autoplay with sound — but if they have chosen sound once,
+   * we attempt to restore it immediately rather than making them click again.
+   * If the browser refuses, PLAYBACK_BLOCKED fires and the overlay comes back.
+   */
+  wantsSound: boolean;
 };
 
-const DEFAULTS: Prefs = { volume: 0.5, muted: true, quality: 'auto' };
+const DEFAULTS: Prefs = { volume: 0.5, muted: true, quality: 'auto', wantsSound: false };
 
 export function loadPrefs(): Prefs {
   try {
@@ -30,6 +37,7 @@ export function loadPrefs(): Prefs {
       // unmuted autoplay, and the overlay restores the stored volume on click.
       muted: true,
       quality: typeof parsed.quality === 'string' ? parsed.quality : DEFAULTS.quality,
+      wantsSound: parsed.wantsSound === true,
     };
   } catch {
     return { ...DEFAULTS };

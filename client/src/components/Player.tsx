@@ -12,6 +12,10 @@ type Props = {
   login: string | null;
   prefs: Prefs;
   onUnmute: () => void;
+  /** Sound was restored automatically for a viewer who had chosen it before. */
+  onAutoUnmuted: () => void;
+  /** The browser refused sound; we are muted again. */
+  onBlocked: () => void;
   onQualities: (qualities: string[]) => void;
   onOffline: (login: string) => void;
 };
@@ -21,7 +25,15 @@ type Props = {
  * Channel changes go through setChannel() rather than remounting, so a viewer's
  * volume and quality survive the room switching streams.
  */
-export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props) {
+export function Player({
+  login,
+  prefs,
+  onUnmute,
+  onAutoUnmuted,
+  onBlocked,
+  onQualities,
+  onOffline,
+}: Props) {
   const playerRef = useRef<TwitchPlayerInstance | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +48,10 @@ export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props
   onOfflineRef.current = onOffline;
   const onQualitiesRef = useRef(onQualities);
   onQualitiesRef.current = onQualities;
+  const onAutoUnmutedRef = useRef(onAutoUnmuted);
+  onAutoUnmutedRef.current = onAutoUnmuted;
+  const onBlockedRef = useRef(onBlocked);
+  onBlockedRef.current = onBlocked;
 
   // --- create the instance once, the first time there's something to play ---
   // Guarded by a ref rather than by `status`, deliberately: keying the effect on
@@ -63,6 +79,22 @@ export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props
 
         instance.addEventListener(Player.READY, () => {
           applyPrefs(instance, prefsRef.current);
+
+          // Playback has to begin muted — no browser permits autoplay with
+          // sound unprompted. But if this viewer has unmuted before, try it
+          // straight away: browsers that have granted the site autoplay
+          // permission will allow it, and those that haven't fire
+          // PLAYBACK_BLOCKED, which puts the overlay back. Either way the
+          // stream is already playing, so nothing is lost by asking.
+          if (prefsRef.current.wantsSound) {
+            try {
+              instance.setMuted(false);
+              instance.setVolume(prefsRef.current.volume);
+              onAutoUnmutedRef.current();
+            } catch {
+              /* the overlay remains the fallback */
+            }
+          }
           try {
             onQualitiesRef.current(instance.getQualities().map((q) => q.name));
           } catch {
@@ -77,6 +109,9 @@ export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props
           } catch {
             /* not fatal */
           }
+          // Re-assert after a channel switch, once the new stream is actually
+          // running and the player will accept the calls.
+          applyPrefs(instance, prefsRef.current);
         });
 
         instance.addEventListener(Player.OFFLINE, () => {
@@ -85,6 +120,15 @@ export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props
         });
 
         instance.addEventListener(Player.PLAYBACK_BLOCKED, () => {
+          // The browser refused sound. Go back to muted so video keeps playing,
+          // and put the overlay back so one click fixes it.
+          try {
+            instance.setMuted(true);
+            instance.play();
+          } catch {
+            /* nothing more we can do without a gesture */
+          }
+          onBlockedRef.current();
           setDismissedUnmute(false);
         });
 
@@ -103,7 +147,13 @@ export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props
   useEffect(() => {
     const instance = playerRef.current;
     if (!instance || !login) return;
+
     instance.setChannel(login);
+    // Twitch may reset volume and mute state on a channel change, and the
+    // preferences effect below won't fire because prefs haven't changed. Without
+    // this a viewer silently loses their own settings whenever the room switches
+    // stream — the exact thing per-viewer controls are supposed to guarantee.
+    applyPrefs(instance, prefsRef.current);
   }, [login]);
 
   // --- per-viewer preferences ---------------------------------------------
@@ -165,6 +215,11 @@ export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props
           className="unmute-overlay"
           onClick={() => {
             setDismissedUnmute(true);
+            try {
+              playerRef.current?.play();
+            } catch {
+              /* already playing */
+            }
             onUnmute();
           }}
         >

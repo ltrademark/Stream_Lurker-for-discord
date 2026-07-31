@@ -173,7 +173,9 @@ export function App() {
         <Player
           login={current?.login ?? null}
           prefs={prefs}
-          onUnmute={() => updatePrefs({ muted: false })}
+          onUnmute={() => updatePrefs({ muted: false, wantsSound: true })}
+          onAutoUnmuted={() => updatePrefs({ muted: false })}
+          onBlocked={() => updatePrefs({ muted: true })}
           onQualities={setQualities}
           onOffline={(login) => send({ t: 'offline', login })}
         />
