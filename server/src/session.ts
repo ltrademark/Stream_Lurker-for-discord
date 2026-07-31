@@ -11,6 +11,8 @@ export type Session = {
 
 export const SESSION_COOKIE = 'sl_session';
 export const STATE_COOKIE = 'sl_oauth_state';
+/** Where to send the user once sign-in completes. */
+export const RETURN_COOKIE = 'sl_return';
 
 const TTL_MS = 12 * 60 * 60 * 1000;
 

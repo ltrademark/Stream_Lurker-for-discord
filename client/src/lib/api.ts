@@ -12,7 +12,10 @@ export async function fetchMe(): Promise<Me | null> {
 }
 
 export function signInUrl(): string {
-  return '/api/auth/login';
+  // Carry the current location through OAuth, so following a shared room link
+  // lands in that room rather than on the server picker.
+  const here = location.pathname + location.search;
+  return `/api/auth/login?return=${encodeURIComponent(here)}`;
 }
 
 export async function signOut(): Promise<void> {

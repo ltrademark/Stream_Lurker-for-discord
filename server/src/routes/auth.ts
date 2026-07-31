@@ -4,6 +4,7 @@ import type { Guild, Me } from '../../../shared/types.js';
 import { env } from '../env.js';
 import { MOD_PERMISSIONS, forget, listGuilds, rememberGuilds } from '../guilds.js';
 import {
+  RETURN_COOKIE,
   SESSION_COOKIE,
   SESSION_TTL_MS,
   STATE_COOKIE,
@@ -18,6 +19,17 @@ export const authRouter = Router();
 
 const SCOPES = ['identify', 'guilds'] as const;
 const STATE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Where to land after sign-in. Only same-origin paths are allowed: anything
+ * absolute, protocol-relative, or otherwise off-site is discarded, so this
+ * cannot be turned into an open redirect by handing someone a crafted link.
+ */
+function safeReturnPath(value: unknown): string {
+  if (typeof value !== 'string' || !value.startsWith('/')) return '/';
+  if (value.startsWith('//') || value.includes('\\')) return '/';
+  return value;
+}
 
 type DiscordUser = {
   id: string;
@@ -62,7 +74,7 @@ async function discord<T>(path: string, accessToken: string): Promise<T> {
 }
 
 /** GET /api/auth/login — start the OAuth redirect. */
-authRouter.get('/auth/login', (_req, res) => {
+authRouter.get('/auth/login', (req, res) => {
   // Random state echoed back by Discord and compared against a cookie, so a
   // third party cannot complete a sign-in on someone else's behalf.
   const state = randomBytes(16).toString('base64url');
@@ -75,7 +87,15 @@ authRouter.get('/auth/login', (_req, res) => {
 
   url.searchParams.set('state', state);
 
-  res.setHeader('set-cookie', cookieHeader(STATE_COOKIE, state, STATE_TTL_MS));
+  // Remember where they were headed. A shared room link carries ?server=<id>,
+  // and without this the OAuth round trip would drop it and dump them on the
+  // server picker instead of in the room they were invited to.
+  const returnTo = safeReturnPath(req.query.return);
+
+  res.setHeader('set-cookie', [
+    cookieHeader(STATE_COOKIE, state, STATE_TTL_MS),
+    cookieHeader(RETURN_COOKIE, encodeURIComponent(returnTo), STATE_TTL_MS),
+  ]);
   res.redirect(url.toString());
 });
 
@@ -132,11 +152,17 @@ authRouter.get('/auth/callback', async (req, res) => {
       avatarUrl: userAvatar(user),
     });
 
+    const cookies = parseCookies(req.headers.cookie);
+    const returnTo = safeReturnPath(
+      cookies[RETURN_COOKIE] ? decodeURIComponent(cookies[RETURN_COOKIE]) : '/',
+    );
+
     res.setHeader('set-cookie', [
       cookieHeader(SESSION_COOKIE, session, SESSION_TTL_MS),
       clearCookieHeader(STATE_COOKIE),
+      clearCookieHeader(RETURN_COOKIE),
     ]);
-    res.redirect('/');
+    res.redirect(returnTo);
   } catch (err) {
     console.error('[auth] callback failed:', err);
     res.status(500).send('Sign-in failed. Check the server logs.');
