@@ -13,6 +13,12 @@ export type Session = {
    * already holds the session it belongs to.
    */
   accessToken: string;
+  /**
+   * Discord refresh token. Access tokens last about a week; this lets the
+   * session be renewed silently rather than expiring out from under someone
+   * mid-week.
+   */
+  refreshToken: string;
   /** Unix ms expiry. */
   exp: number;
 };
@@ -22,7 +28,10 @@ export const STATE_COOKIE = 'sl_oauth_state';
 /** Where to send the user once sign-in completes. */
 export const RETURN_COOKIE = 'sl_return';
 
-const TTL_MS = 12 * 60 * 60 * 1000;
+// Long-lived on purpose: with a refresh token the session can be renewed
+// silently, so there is no reason to make people sign in again every day.
+// Signing out revokes it immediately, server-side and in the browser.
+const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function sign(payload: string): string {
   return createHmac('sha256', env.sessionSecret).update(payload).digest('base64url');

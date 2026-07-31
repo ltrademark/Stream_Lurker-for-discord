@@ -13,6 +13,7 @@ import {
   issueSession,
   parseCookies,
   verifySession,
+  type Session,
 } from '../session.js';
 
 export const authRouter = Router();
@@ -128,7 +129,10 @@ authRouter.get('/auth/callback', async (req, res) => {
       return;
     }
 
-    const { access_token } = (await tokenRes.json()) as { access_token: string };
+    const { access_token, refresh_token } = (await tokenRes.json()) as {
+      access_token: string;
+      refresh_token: string;
+    };
 
     const [user, guilds] = await Promise.all([
       discord<DiscordUser>('/users/@me', access_token),
@@ -151,6 +155,7 @@ authRouter.get('/auth/callback', async (req, res) => {
       name: user.global_name || user.username,
       avatarUrl: userAvatar(user),
       accessToken: access_token,
+      refreshToken: refresh_token ?? '',
     });
 
     const cookies = parseCookies(req.headers.cookie);
@@ -170,19 +175,65 @@ authRouter.get('/auth/callback', async (req, res) => {
   }
 });
 
-/** Rebuilds the guild cache from Discord using the session's access token. */
-async function refreshGuilds(session: { userId: string; accessToken: string }): Promise<Guild[]> {
-  const guilds = await discord<DiscordGuild[]>('/users/@me/guilds', session.accessToken);
-
-  const resolved: Guild[] = guilds.map((guild) => ({
+function resolveGuilds(guilds: DiscordGuild[]): Guild[] {
+  return guilds.map((guild) => ({
     id: guild.id,
     name: guild.name,
     iconUrl: guildIcon(guild),
     isModerator: guild.owner || (BigInt(guild.permissions) & MOD_PERMISSIONS) !== 0n,
   }));
+}
 
-  rememberGuilds(session.userId, resolved);
-  return resolved;
+/** Exchanges a refresh token for a fresh access token. */
+async function renewToken(refreshToken: string): Promise<{ access: string; refresh: string }> {
+  const res = await fetch('https://discord.com/api/v10/oauth2/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.discordClientId,
+      client_secret: env.discordClientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Refresh rejected: ${res.status}`);
+
+  const body = (await res.json()) as { access_token: string; refresh_token: string };
+  return { access: body.access_token, refresh: body.refresh_token ?? refreshToken };
+}
+
+/**
+ * Rebuilds the guild cache from Discord, renewing the access token first if it
+ * has expired. Returns a replacement session cookie when the token changed, so
+ * the caller can persist it.
+ */
+async function refreshGuilds(
+  session: Session,
+): Promise<{ guilds: Guild[]; newCookie: string | null }> {
+  try {
+    const guilds = await discord<DiscordGuild[]>('/users/@me/guilds', session.accessToken);
+    rememberGuilds(session.userId, resolveGuilds(guilds));
+    return { guilds: resolveGuilds(guilds), newCookie: null };
+  } catch (err) {
+    // Most likely the access token aged out. Renew and try once more before
+    // giving up and sending them back to sign-in.
+    if (!session.refreshToken) throw err;
+
+    const renewed = await renewToken(session.refreshToken);
+    const guilds = await discord<DiscordGuild[]>('/users/@me/guilds', renewed.access);
+    const resolved = resolveGuilds(guilds);
+    rememberGuilds(session.userId, resolved);
+
+    const refreshedSession = issueSession({
+      userId: session.userId,
+      name: session.name,
+      avatarUrl: session.avatarUrl,
+      accessToken: renewed.access,
+      refreshToken: renewed.refresh,
+    });
+    return { guilds: resolved, newCookie: cookieHeader(SESSION_COOKIE, refreshedSession, SESSION_TTL_MS) };
+  }
 }
 
 /** GET /api/me — who am I, and which servers can I open a room for? */
@@ -201,7 +252,12 @@ authRouter.get('/me', async (req, res) => {
   // signed out. Rebuild it from Discord rather than making them sign in again.
   if (guilds.length === 0) {
     try {
-      guilds = await refreshGuilds(session);
+      const refreshed = await refreshGuilds(session);
+      guilds = refreshed.guilds;
+      if (refreshed.newCookie) {
+        res.setHeader('set-cookie', refreshed.newCookie);
+        console.log(`[auth] renewed Discord token for ${session.name}`);
+      }
       console.log(`[auth] rebuilt guild cache for ${session.name}`);
     } catch (err) {
       console.error('[auth] guild refresh failed, session is unusable:', err);
