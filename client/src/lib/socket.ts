@@ -12,6 +12,9 @@ const RECONNECT_MAX_MS = 8_000;
  * Auto-reconnecting socket. Because the server broadcasts full snapshots there
  * is nothing to replay after a drop — say hello again and the next state
  * message brings us current.
+ *
+ * Identity travels in the session cookie the browser attaches automatically, so
+ * no credential is ever handled here.
  */
 export class RoomSocket {
   private ws: WebSocket | null = null;
@@ -20,7 +23,7 @@ export class RoomSocket {
   private closed = false;
 
   constructor(
-    private readonly session: string,
+    private readonly guildId: string,
     private readonly handlers: Handlers,
   ) {
     this.connect();
@@ -30,12 +33,12 @@ export class RoomSocket {
     if (this.closed) return;
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${location.host}/.proxy/ws`);
+    const ws = new WebSocket(`${protocol}//${location.host}/ws`);
     this.ws = ws;
 
     ws.addEventListener('open', () => {
       this.retryDelay = RECONNECT_MIN_MS;
-      this.send({ t: 'hello', token: this.session });
+      this.send({ t: 'hello', guildId: this.guildId });
       this.handlers.onStatusChange(true);
     });
 

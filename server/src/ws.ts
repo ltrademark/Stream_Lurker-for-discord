@@ -1,8 +1,9 @@
-import type { Server } from 'node:http';
+import type { IncomingMessage, Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { MODERATOR_ONLY, type ClientMessage } from '../../shared/types.js';
 import { parseChannelInput } from '../../shared/twitch.js';
-import { verifySession } from './session.js';
+import { guildFor } from './guilds.js';
+import { SESSION_COOKIE, parseCookies, verifySession, type Session } from './session.js';
 import { lookupChannel } from './twitch.js';
 import {
   addToQueue,
@@ -30,19 +31,25 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
-    // The proxy prefix is stripped in index.ts for HTTP, but upgrades bypass
-    // Express middleware, so tolerate both spellings here too.
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/^\/\.proxy/, '');
-
-    if (path !== '/ws') {
+    if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/ws') {
       socket.destroy();
       return;
     }
 
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    // Identity is established here, from the same signed cookie the HTTP routes
+    // use. The browser sends it automatically on a same-origin WebSocket, so no
+    // token is ever handled by client code.
+    const session = sessionFrom(req);
+    if (!session) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, session));
   });
 
-  wss.on('connection', (ws: WebSocket) => {
+  wss.on('connection', (ws: WebSocket, _req: IncomingMessage, session: Session) => {
     let client: Client | null = null;
     let room: Room | null = null;
     const addTimes: number[] = [];
@@ -60,13 +67,16 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
       }
       if (!message || typeof message.t !== 'string') return;
 
-      // --- handshake -------------------------------------------------------
+      // --- joining a room --------------------------------------------------
       if (message.t === 'hello') {
         if (client) return;
 
-        const session = verifySession(message.token);
-        if (!session) {
-          ws.close(4003, 'invalid session');
+        // The gate: the guild must be one this user actually belongs to, and
+        // their moderator status comes from what Discord told us at sign-in.
+        // A client naming someone else's server gets nothing.
+        const guild = guildFor(session.userId, String(message.guildId));
+        if (!guild) {
+          ws.close(4004, 'not a member of that server');
           return;
         }
 
@@ -76,12 +86,11 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
           userId: session.userId,
           name: session.name,
           avatarUrl: session.avatarUrl,
-          isModerator: session.isModerator,
+          isModerator: guild.isModerator,
         };
-        room = joinRoom(session.instanceId, client);
+        room = joinRoom(guild.id, client);
         console.log(
-          `[ws] ${session.name} joined ${session.instanceId}` +
-            (session.isModerator ? ' (moderator)' : ''),
+          `[ws] ${session.name} joined ${guild.name}` + (guild.isModerator ? ' (moderator)' : ''),
         );
         return;
       }
@@ -93,7 +102,7 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
 
       // --- authorisation ---------------------------------------------------
       // The single gate for every mutating command. The client's own idea of
-      // its moderator status is irrelevant; only the signed session counts.
+      // its moderator status is irrelevant; only the server's is consulted.
       if (MODERATOR_ONLY.has(message.t) && !client.isModerator) {
         sendError(client, 'Only server moderators can do that.');
         return;
@@ -105,7 +114,7 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
     ws.on('close', () => {
       clearTimeout(helloTimer);
       if (client && room) {
-        console.log(`[ws] ${client.name} left ${room.instanceId}`);
+        console.log(`[ws] ${client.name} left ${room.guildId}`);
         leaveRoom(room, client);
       }
     });
@@ -114,6 +123,11 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
   });
 
   return wss;
+}
+
+function sessionFrom(req: IncomingMessage): Session | null {
+  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+  return token ? verifySession(token) : null;
 }
 
 async function handle(

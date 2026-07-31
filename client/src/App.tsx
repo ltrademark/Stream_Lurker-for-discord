@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ClientMessage, RoomState } from '../../shared/types.ts';
+import type { ClientMessage, Me, RoomState } from '../../shared/types.ts';
 import { AddChannel } from './components/AddChannel.tsx';
 import { Controls } from './components/Controls.tsx';
+import { GuildPicker } from './components/GuildPicker.tsx';
 import { NowPlaying } from './components/NowPlaying.tsx';
 import { Participants } from './components/Participants.tsx';
 import { Player } from './components/Player.tsx';
 import { Queue } from './components/Queue.tsx';
-import { applyUrlMappings, authenticate, isInsideDiscord } from './lib/discord.ts';
+import { SignIn } from './components/SignIn.tsx';
+import { fetchMe, guildFromUrl, setGuildInUrl, signOut } from './lib/api.ts';
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs.ts';
 import { RoomSocket } from './lib/socket.ts';
 
 type Phase =
   | { name: 'booting' }
-  | { name: 'outside' }
+  | { name: 'signed-out' }
+  | { name: 'picking'; me: Me }
   | { name: 'failed'; error: string }
-  | { name: 'live' };
+  | { name: 'live'; me: Me; guildId: string };
 
 const EMPTY_STATE: RoomState = {
+  guildId: '',
   current: null,
   queue: [],
   participants: [],
@@ -34,56 +38,59 @@ export function App() {
 
   const socketRef = useRef<RoomSocket | null>(null);
 
-  // --- boot ---------------------------------------------------------------
+  // --- who are we? ---------------------------------------------------------
   useEffect(() => {
-    if (!isInsideDiscord()) {
-      setPhase({ name: 'outside' });
-      return;
-    }
-
-    let socket: RoomSocket | null = null;
-    // StrictMode mounts effects twice in dev; without this the first run's
-    // socket is created after its own cleanup has already gone by, and leaks.
     let cancelled = false;
 
-    // Must run before anything tries to reach Twitch.
-    applyUrlMappings();
-
-    authenticate()
-      .then(({ session }) => {
+    fetchMe()
+      .then((me) => {
         if (cancelled) return;
+        if (!me) {
+          setPhase({ name: 'signed-out' });
+          return;
+        }
 
-        socket = new RoomSocket(session, {
-          onStatusChange: setConnected,
-          onMessage: (message) => {
-            if (message.t === 'state') {
-              setState(message.state);
-              setIsModerator(message.you.isModerator);
-            } else if (message.t === 'error') {
-              setToast(message.message);
-            }
-          },
-        });
-        socketRef.current = socket;
-        setPhase({ name: 'live' });
+        // A shared link carries the server, so following one goes straight in.
+        const fromUrl = guildFromUrl();
+        const known = fromUrl && me.guilds.some((g) => g.id === fromUrl);
+        setPhase(known ? { name: 'live', me, guildId: fromUrl } : { name: 'picking', me });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        console.error('[boot]', err);
-        setPhase({
-          name: 'failed',
-          error: err instanceof Error ? err.message : String(err),
-        });
+        setPhase({ name: 'failed', error: err instanceof Error ? err.message : String(err) });
       });
 
     return () => {
       cancelled = true;
-      socket?.close();
-      socketRef.current = null;
     };
   }, []);
 
-  // --- toasts self-dismiss ------------------------------------------------
+  // --- room socket, torn down and rebuilt when the server changes ----------
+  const guildId = phase.name === 'live' ? phase.guildId : null;
+
+  useEffect(() => {
+    if (!guildId) return;
+
+    setState(EMPTY_STATE);
+    const socket = new RoomSocket(guildId, {
+      onStatusChange: setConnected,
+      onMessage: (message) => {
+        if (message.t === 'state') {
+          setState(message.state);
+          setIsModerator(message.you.isModerator);
+        } else if (message.t === 'error') {
+          setToast(message.message);
+        }
+      },
+    });
+    socketRef.current = socket;
+
+    return () => {
+      socket.close();
+      socketRef.current = null;
+    };
+  }, [guildId]);
+
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 4000);
@@ -102,41 +109,48 @@ export function App() {
     });
   }, []);
 
-  // --- boot screens -------------------------------------------------------
+  const leave = useCallback(() => {
+    setGuildInUrl(null);
+    setPhase((current) => (current.name === 'live' ? { name: 'picking', me: current.me } : current));
+  }, []);
+
+  // --- boot screens --------------------------------------------------------
   if (phase.name === 'booting') {
     return (
       <div className="boot">
         <div className="spinner" />
-        <p>Connecting to Discord…</p>
       </div>
     );
   }
 
-  if (phase.name === 'outside') {
-    return (
-      <div className="boot">
-        <h1>Launch this from Discord</h1>
-        <p>
-          This is a Discord Activity. Join a voice channel, press the rocket button in the
-          call controls, and pick it from the shelf.
-        </p>
-      </div>
-    );
-  }
+  if (phase.name === 'signed-out') return <SignIn />;
 
   if (phase.name === 'failed') {
     return (
       <div className="boot">
         <h1>Couldn’t start</h1>
         <p style={{ whiteSpace: 'pre-wrap' }}>{phase.error}</p>
-        <p>
-          Check <code>.env</code> and the URL mappings in the Developer Portal, then reload.
-        </p>
       </div>
     );
   }
 
+  if (phase.name === 'picking') {
+    return (
+      <GuildPicker
+        me={phase.me}
+        onPick={(id) => {
+          setGuildInUrl(id);
+          setPhase({ name: 'live', me: phase.me, guildId: id });
+        }}
+        onSignOut={() => {
+          void signOut().then(() => setPhase({ name: 'signed-out' }));
+        }}
+      />
+    );
+  }
+
   const current = state.current;
+  const guild = phase.me.guilds.find((g) => g.id === phase.guildId);
 
   return (
     <div className="app">
@@ -161,6 +175,14 @@ export function App() {
       </div>
 
       <div className="sidebar">
+        <div className="room-head">
+          {guild?.iconUrl && <img className="avatar sm" src={guild.iconUrl} alt="" />}
+          <span className="room-name">{guild?.name ?? 'Room'}</span>
+          <button type="button" className="ghost" onClick={leave}>
+            Change
+          </button>
+        </div>
+
         <NowPlaying item={current} metadataEnabled={state.metadataEnabled} />
 
         <div className="section-head">

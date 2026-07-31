@@ -26,16 +26,24 @@ if (!sessionSecret) {
   );
 }
 
+const port = Number(process.env.PORT) || 3000;
+
 export const env = {
   discordClientId: required('DISCORD_CLIENT_ID'),
   discordClientSecret: required('DISCORD_CLIENT_SECRET'),
+
+  /**
+   * Where this app is reachable, used to build the OAuth redirect_uri. Must
+   * match a redirect exactly as registered in the Discord developer portal.
+   */
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`).replace(/\/$/, ''),
 
   /** Both required together, or metadata is disabled and the app degrades. */
   twitchClientId: process.env.TWITCH_CLIENT_ID ?? '',
   twitchClientSecret: process.env.TWITCH_CLIENT_SECRET ?? '',
 
   sessionSecret: sessionSecret ?? randomBytes(32).toString('hex'),
-  port: Number(process.env.PORT) || 3000,
+  port,
   isProduction: process.env.NODE_ENV === 'production',
 };
 

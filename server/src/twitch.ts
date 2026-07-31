@@ -56,17 +56,6 @@ type HelixUser = {
   profile_image_url: string;
 };
 
-/**
- * Rewrites Twitch's absolute CDN URLs into activity proxy paths. Doing it here
- * means the wire type already carries something the sandbox can load, and the
- * client never has to think about it. Requires the URL mapping
- * /twitch-cdn -> static-cdn.jtvnw.net.
- */
-function proxyAvatar(url: string | undefined): string | null {
-  if (!url) return null;
-  const prefix = 'https://static-cdn.jtvnw.net/';
-  return url.startsWith(prefix) ? `/.proxy/twitch-cdn/${url.slice(prefix.length)}` : url;
-}
 
 type HelixStream = {
   user_login: string;
@@ -108,7 +97,7 @@ export async function fetchChannels(logins: string[]): Promise<Map<string, Chann
       out.set(login, {
         login,
         displayName: user.display_name || login,
-        avatarUrl: proxyAvatar(user.profile_image_url),
+        avatarUrl: user.profile_image_url || null,
         live: Boolean(stream),
         title: stream?.title ?? null,
         game: stream?.game_name || null,

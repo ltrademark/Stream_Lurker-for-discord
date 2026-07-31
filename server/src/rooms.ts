@@ -13,7 +13,7 @@ export type Client = {
 };
 
 export type Room = {
-  instanceId: string;
+  guildId: string;
   current: QueueItem | null;
   queue: QueueItem[];
   clients: Set<Client>;
@@ -33,19 +33,19 @@ const POLL_INTERVAL_MS = 30_000;
 
 // --- lifecycle ---------------------------------------------------------------
 
-export function joinRoom(instanceId: string, client: Client): Room {
-  let room = rooms.get(instanceId);
+export function joinRoom(guildId: string, client: Client): Room {
+  let room = rooms.get(guildId);
   if (!room) {
     room = {
-      instanceId,
+      guildId,
       current: null,
       queue: [],
       clients: new Set(),
       reapTimer: null,
       offlineSince: null,
     };
-    rooms.set(instanceId, room);
-    console.log(`[room ${instanceId}] created`);
+    rooms.set(guildId, room);
+    console.log(`[room ${guildId}] created`);
   }
 
   if (room.reapTimer) {
@@ -63,8 +63,8 @@ export function leaveRoom(room: Room, client: Client): void {
 
   if (room.clients.size === 0) {
     room.reapTimer = setTimeout(() => {
-      rooms.delete(room.instanceId);
-      console.log(`[room ${room.instanceId}] reaped`);
+      rooms.delete(room.guildId);
+      console.log(`[room ${room.guildId}] reaped`);
     }, REAP_DELAY_MS);
     return;
   }
@@ -90,6 +90,7 @@ function participants(room: Room): Participant[] {
 
 function snapshot(room: Room): RoomState {
   return {
+    guildId: room.guildId,
     current: room.current,
     queue: room.queue,
     participants: participants(room),
@@ -223,7 +224,7 @@ export async function reportOffline(room: Room, login: string): Promise<void> {
       console.error('[room] offline confirmation failed, ignoring report:', err);
       return;
     }
-    console.log(`[room ${room.instanceId}] ${login} confirmed offline, advancing`);
+    console.log(`[room ${room.guildId}] ${login} confirmed offline, advancing`);
     skip(room);
     return;
   }
@@ -297,7 +298,7 @@ function advanceIfOffline(room: Room): boolean {
   room.offlineSince ??= Date.now();
 
   if (room.queue.length > 0 && Date.now() - room.offlineSince >= OFFLINE_GRACE_MS) {
-    console.log(`[room ${room.instanceId}] ${current.login} offline, auto-advancing`);
+    console.log(`[room ${room.guildId}] ${current.login} offline, auto-advancing`);
     skip(room);
     return true;
   }

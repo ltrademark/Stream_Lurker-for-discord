@@ -566,3 +566,113 @@ input[type='range']::-moz-range-thumb {
   z-index: 20;
   max-width: 90vw;
 }
+
+/* --- sign-in and server picker ------------------------------------------- */
+
+.boot.wide p { max-width: 44ch; }
+
+.brand {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.brand span { color: var(--purple); }
+
+.btn-discord {
+  display: inline-block;
+  background: #5865f2;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  padding: 11px 22px;
+  border-radius: var(--radius);
+  margin-top: 4px;
+}
+
+.btn-discord:hover { background: #4752c4; }
+
+.fine {
+  font-size: 11px !important;
+  color: var(--faint) !important;
+  max-width: 40ch !important;
+}
+
+.guild-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  width: min(420px, 90vw);
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guild-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+.guild-list .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.avatar.placeholder {
+  display: grid;
+  place-content: center;
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.mod-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--purple-hi);
+  background: var(--purple-ghost);
+  padding: 2px 7px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.signed-in {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* --- room header ---------------------------------------------------------- */
+
+.room-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.room-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

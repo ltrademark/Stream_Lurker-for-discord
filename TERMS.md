@@ -2,13 +2,14 @@
 
 _Last updated: 30 July 2026_
 
-Stream Lurker is a Discord Activity that lets people in a voice channel watch one
-Twitch stream together. By launching it, you agree to what follows.
+Stream Lurker is a website that lets a Discord server watch one Twitch stream
+together. By using it, you agree to what follows.
 
 ## 1. What this is
 
 A small, free, open-source tool. It synchronises *which* Twitch channel a group is
 watching and gives each viewer their own volume and quality controls. Nothing more.
+It is not affiliated with Discord beyond using their sign-in.
 
 It is not affiliated with, endorsed by, or sponsored by Twitch Interactive, Inc. or
 Discord Inc. "Twitch" and "Discord" are trademarks of their respective owners and
@@ -35,22 +36,22 @@ embedded players everywhere, not a limitation this app chose or can change.
 
 ## 3. Discord's terms also apply
 
-Using a Discord Activity means Discord's terms apply to you as well:
+Signing in with Discord means Discord's terms apply to you as well:
 
 - [Discord Terms of Service](https://discord.com/terms)
 - [Discord Community Guidelines](https://discord.com/guidelines)
 
 ## 4. Moderation is your server's job
 
-Anyone in the activity can add a channel to the shared queue. Whoever holds
-Discord moderator permissions in that server (Administrator, Manage Server, Manage
+Anyone in a room can add a channel to the shared queue. Whoever holds Discord
+moderator permissions in that server (Administrator, Manage Server, Manage
 Channels, or Move Members) can override what is playing, reorder the queue, skip,
-and stop.
+and stop. Rooms are per Discord server, and only members of that server can join.
 
 Stream Lurker does not review, filter, rate, or curate what gets queued. If someone
 queues something unwelcome, that is a moderation matter for your Discord server,
-using your server's own permissions and rules. Choose who you open the activity
-with accordingly.
+using your server's own permissions and rules. Choose who you share the link with
+accordingly.
 
 ## 5. Acceptable use
 

@@ -2,32 +2,32 @@
 
 _Last updated: 30 July 2026_
 
-Stream Lurker is a Discord Activity that lets people in a voice channel watch one
-Twitch stream together. This policy describes exactly what it touches. It is short
-because the app does very little.
+Stream Lurker is a website that lets a Discord server watch one Twitch stream
+together. This policy describes exactly what it touches. It is short because the
+app does very little.
 
 ## The short version
 
 There is no database. Nothing you do in Stream Lurker is written to disk on the
 server, and nothing is shared with anyone. All state lives in the server's memory
-and is discarded 60 seconds after the last person leaves the activity.
+and is discarded 60 seconds after the last person leaves a room.
 
 ## What the app receives from Discord
 
-When you launch the activity, Discord asks your permission to share two things
-(the `identify` and `guilds` OAuth scopes):
+When you sign in, Discord asks your permission to share two things (the
+`identify` and `guilds` OAuth scopes):
 
 - **Your Discord account** — user ID, username, display name, and avatar. Used to
   label who added a channel to the queue and to show the participant list.
-- **Your list of Discord servers, with your permissions in each** — used once, at
-  launch, to work out whether you have moderator permissions in the server you're
-  currently in. Only the answer to that single yes/no question is kept; the list
-  itself is discarded immediately and never stored.
+- **Your list of Discord servers, with your permissions in each** — used to show
+  which servers you can open a room for, and to work out where you hold moderator
+  permissions. Server names, icons and that yes/no answer are held in memory for
+  the life of your session and never written to disk.
 
-Your Discord ID, display name, avatar URL, the activity instance you're in, and
-that moderator yes/no are packed into a signed session token that expires after 12
-hours. It exists so the server can recognise your connection without re-asking
-Discord. It is not readable or usable by anyone else.
+Your Discord ID, display name and avatar URL are packed into a signed session
+cookie that expires after 12 hours. Your moderator status is deliberately **not**
+in the cookie — it is held server-side, so it cannot be edited by anyone holding
+the cookie. The cookie is HttpOnly, so page scripts cannot read it either.
 
 ## What the app receives from Twitch
 
@@ -39,9 +39,11 @@ look up channel display names, avatars, live status, stream titles, categories,
 viewer counts, and start times. That is public information about broadcasters, not
 about viewers.
 
-Video and audio play through Twitch's official embedded player. Because the player
-is loaded through Discord's activity proxy, Twitch does not receive your Discord
-identity, and Discord's proxy is what conceals your IP address from Twitch.
+Video and audio play through Twitch's official embedded player, loaded directly
+from Twitch in your browser. Twitch therefore sees your IP address and sets its
+own cookies, exactly as visiting twitch.tv would — that is between you and Twitch,
+and is governed by their privacy notice. Twitch never receives your Discord
+identity from us.
 
 ## What is stored on your own device
 
@@ -52,13 +54,15 @@ browser storage resets them.
 
 ## What is stored on the server
 
-Only in memory, only while the activity is open:
+Only in memory, only while a room is open:
 
-- The channel currently playing and the queue of channels waiting
+- Per room: the channel currently playing and the queue of channels waiting
 - For each entry, which participant added it and when
 - The list of people currently connected, with the fields listed above
+- Per signed-in user: your server list and where you moderate, until the session
+  expires or you sign out
 
-When the last participant disconnects, a 60-second grace period runs (so a page
+When the last participant leaves a room, a 60-second grace period runs (so a page
 reload doesn't wipe the queue) and then the entire room is deleted. A server
 restart clears everything immediately.
 
@@ -68,13 +72,13 @@ restart clears everything immediately.
 - No selling, sharing, or transferring of data to third parties
 - No logging of your messages, voice, video, or screen
 - No reading of Discord messages — the app has no bot and no message access
-- No cookies of its own
-- No persistence of any kind between activity sessions
+- No tracking cookies. The one cookie set is the sign-in session described above
+- No persistence of any kind between server restarts
 
 ## Server logs
 
 The server prints operational lines to its console — for example that a display
-name joined an activity instance, or that a channel was queued. These are ordinary
+name joined a server's room, or that a channel was queued. These are ordinary
 process logs, not an analytics pipeline. They are not written to a database and
 are lost when the process restarts. Whoever hosts the instance you are using
 controls those logs.
@@ -89,10 +93,10 @@ their own handling of your data:
 
 ## Your choices
 
-Because nothing is retained, there is nothing to export or delete. Closing the
-activity ends the session; the room disappears once everyone has left. To remove
-the app's access to your Discord account entirely, visit Discord **User Settings →
-Authorized Apps** and revoke it.
+Because nothing is retained, there is nothing to export or delete. Signing out
+clears your session and your cached server list immediately; the room disappears
+once everyone has left. To remove the app's access to your Discord account
+entirely, visit Discord **User Settings → Authorized Apps** and revoke it.
 
 ## Children
 

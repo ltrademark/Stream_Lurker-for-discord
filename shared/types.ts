@@ -32,7 +32,25 @@ export type Participant = {
   isModerator: boolean;
 };
 
+/** A Discord server the signed-in user belongs to. One room per guild. */
+export type Guild = {
+  id: string;
+  name: string;
+  iconUrl: string | null;
+  /** Whether this user moderates this guild. Resolved server-side, never trusted from the client. */
+  isModerator: boolean;
+};
+
+/** GET /api/me */
+export type Me = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  guilds: Guild[];
+};
+
 export type RoomState = {
+  guildId: string;
   current: QueueItem | null;
   queue: QueueItem[];
   participants: Participant[];
@@ -41,7 +59,8 @@ export type RoomState = {
 };
 
 export type ClientMessage =
-  | { t: 'hello'; token: string }
+  /** Join the room for a guild. Identity comes from the session cookie. */
+  | { t: 'hello'; guildId: string }
   | { t: 'queue:add'; input: string }
   | { t: 'queue:remove'; id: string }
   | { t: 'queue:reorder'; id: string; index: number }
