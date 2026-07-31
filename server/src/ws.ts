@@ -74,9 +74,12 @@ export function attachWebSocketServer(server: Server): WebSocketServer {
         // The gate: the guild must be one this user actually belongs to, and
         // their moderator status comes from what Discord told us at sign-in.
         // A client naming someone else's server gets nothing.
+        // Also fires when the server has restarted: the signed cookie is still
+        // valid, but the in-memory guild store it was resolved into is gone.
+        // Either way the client must sign in again, so say so unambiguously.
         const guild = guildFor(session.userId, String(message.guildId));
         if (!guild) {
-          ws.close(4004, 'not a member of that server');
+          ws.close(4004, 'session expired or not a member of that server');
           return;
         }
 

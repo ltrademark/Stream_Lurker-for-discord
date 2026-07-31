@@ -83,6 +83,10 @@ export function App() {
     setState(EMPTY_STATE);
     const socket = new RoomSocket(guildId, {
       onStatusChange: setConnected,
+      onRejected: (reason) => {
+        setToast(reason);
+        setPhase({ name: 'signed-out' });
+      },
       onMessage: (message) => {
         if (message.t === 'state') {
           setState(message.state);

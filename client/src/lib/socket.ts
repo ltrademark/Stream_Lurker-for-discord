@@ -3,7 +3,22 @@ import type { ClientMessage, ServerMessage } from '../../../shared/types.ts';
 type Handlers = {
   onMessage: (message: ServerMessage) => void;
   onStatusChange: (connected: boolean) => void;
+  /**
+   * The server refused us outright. Retrying cannot help — the caller should
+   * send the user back to sign-in.
+   */
+  onRejected: (reason: string) => void;
 };
+
+/**
+ * Close codes that mean "do not retry". 4003/4004 are issued when the session
+ * is unusable — most commonly because the server restarted and lost the
+ * in-memory record of which servers this user belongs to.
+ */
+const FATAL_CLOSE_CODES = new Map<number, string>([
+  [4003, 'Your session is no longer valid. Please sign in again.'],
+  [4004, 'Your session expired. Please sign in again.'],
+]);
 
 const RECONNECT_MIN_MS = 500;
 const RECONNECT_MAX_MS = 8_000;
@@ -50,8 +65,15 @@ export class RoomSocket {
       }
     });
 
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event) => {
       this.handlers.onStatusChange(false);
+
+      const fatal = FATAL_CLOSE_CODES.get(event.code);
+      if (fatal) {
+        this.closed = true;
+        this.handlers.onRejected(fatal);
+        return;
+      }
       this.scheduleReconnect();
     });
 
