@@ -150,6 +150,7 @@ authRouter.get('/auth/callback', async (req, res) => {
       userId: user.id,
       name: user.global_name || user.username,
       avatarUrl: userAvatar(user),
+      accessToken: access_token,
     });
 
     const cookies = parseCookies(req.headers.cookie);
@@ -169,8 +170,23 @@ authRouter.get('/auth/callback', async (req, res) => {
   }
 });
 
+/** Rebuilds the guild cache from Discord using the session's access token. */
+async function refreshGuilds(session: { userId: string; accessToken: string }): Promise<Guild[]> {
+  const guilds = await discord<DiscordGuild[]>('/users/@me/guilds', session.accessToken);
+
+  const resolved: Guild[] = guilds.map((guild) => ({
+    id: guild.id,
+    name: guild.name,
+    iconUrl: guildIcon(guild),
+    isModerator: guild.owner || (BigInt(guild.permissions) & MOD_PERMISSIONS) !== 0n,
+  }));
+
+  rememberGuilds(session.userId, resolved);
+  return resolved;
+}
+
 /** GET /api/me — who am I, and which servers can I open a room for? */
-authRouter.get('/me', (req, res) => {
+authRouter.get('/me', async (req, res) => {
   const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
   const session = token ? verifySession(token) : null;
 
@@ -179,12 +195,20 @@ authRouter.get('/me', (req, res) => {
     return;
   }
 
-  const guilds = listGuilds(session.userId);
+  let guilds = listGuilds(session.userId);
+
+  // Empty means the process restarted and lost the cache, not that the user is
+  // signed out. Rebuild it from Discord rather than making them sign in again.
   if (guilds.length === 0) {
-    // Session outlived the cached guild list; make them sign in again rather
-    // than show an empty server picker.
-    res.status(401).json({ error: 'Session expired. Sign in again.' });
-    return;
+    try {
+      guilds = await refreshGuilds(session);
+      console.log(`[auth] rebuilt guild cache for ${session.name}`);
+    } catch (err) {
+      console.error('[auth] guild refresh failed, session is unusable:', err);
+      res.setHeader('set-cookie', clearCookieHeader(SESSION_COOKIE));
+      res.status(401).json({ error: 'Session expired. Sign in again.' });
+      return;
+    }
   }
 
   const me: Me = {

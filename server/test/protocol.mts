@@ -81,7 +81,7 @@ class TestClient {
 }
 
 function cookieFor(userId: string, name: string): string {
-  return `${SESSION_COOKIE}=${issueSession({ userId, name, avatarUrl: null })}`;
+  return `${SESSION_COOKIE}=${issueSession({ userId, name, avatarUrl: null, accessToken: 'test-token' })}`;
 }
 
 // === channel parsing ========================================================

@@ -5,6 +5,14 @@ export type Session = {
   userId: string;
   name: string;
   avatarUrl: string | null;
+  /**
+   * Discord access token, kept so the guild list can be rebuilt after a server
+   * restart without making the user sign in again. Held in the signed HttpOnly
+   * cookie rather than on disk, so the server stays stateless and nothing is
+   * persisted. Scoped to identify+guilds, and anyone able to read this cookie
+   * already holds the session it belongs to.
+   */
+  accessToken: string;
   /** Unix ms expiry. */
   exp: number;
 };
@@ -21,9 +29,10 @@ function sign(payload: string): string {
 }
 
 /**
- * Signed, self-contained session. Deliberately holds only identity — guild
- * permissions live server-side in guilds.ts, so a large guild list never has to
- * fit in a cookie and a client can never edit its own moderator status.
+ * Signed, self-contained session. Holds identity and the Discord access token,
+ * but never moderator status — that lives server-side in guilds.ts, so a large
+ * guild list need not fit in a cookie and a client can never edit its own
+ * rights.
  */
 export function issueSession(data: Omit<Session, 'exp'>): string {
   const session: Session = { ...data, exp: Date.now() + TTL_MS };

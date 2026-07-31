@@ -25,9 +25,14 @@ When you sign in, Discord asks your permission to share two things (the
   the life of your session and never written to disk.
 
 Your Discord ID, display name and avatar URL are packed into a signed session
-cookie that expires after 12 hours. Your moderator status is deliberately **not**
-in the cookie — it is held server-side, so it cannot be edited by anyone holding
-the cookie. The cookie is HttpOnly, so page scripts cannot read it either.
+cookie that expires after 12 hours, along with the Discord access token from
+sign-in. The token is kept there — rather than on disk — so your server list can
+be rebuilt if the app restarts, without making you sign in again. It grants only
+what you approved: reading your profile and your server list.
+
+Your moderator status is deliberately **not** in the cookie — it is held
+server-side, so it cannot be edited by anyone holding the cookie. The cookie is
+HttpOnly, so page scripts cannot read it either.
 
 ## What the app receives from Twitch
 
