@@ -17,6 +17,13 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+// Where this server believes it is reachable. Only non-secret configuration —
+// used by the client to tell someone who opened the app in the wrong place
+// where the right place actually is.
+app.get('/api/config', (_req, res) => {
+  res.json({ publicBaseUrl: env.publicBaseUrl });
+});
+
 app.use('/api', authRouter);
 
 // Serve the built client in production; in dev, Vite serves it on its own port.
