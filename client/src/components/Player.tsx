@@ -8,6 +8,14 @@ import {
 
 const MOUNT_ID = 'twitch-player-mount';
 
+/**
+ * The embed sometimes reports OFFLINE for a channel that is still live — a
+ * stalled ad break, a CDN edge switch, a dropped segment it never recovers
+ * from. Reloading the channel fixes it, which is what a manual page refresh was
+ * really doing. Back off so a genuinely offline channel is not hammered.
+ */
+const RECOVERY_DELAYS_MS = [4_000, 8_000, 15_000, 30_000];
+
 type Props = {
   login: string | null;
   prefs: Prefs;
@@ -38,6 +46,11 @@ export function Player({
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [dismissedUnmute, setDismissedUnmute] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+
+  // Attempts since the stream last played successfully.
+  const recoveryAttemptRef = useRef(0);
+  const recoveryTimerRef = useRef<number | null>(null);
 
   // Latest values for use inside long-lived event handlers.
   const loginRef = useRef(login);
@@ -104,6 +117,14 @@ export function Player({
         });
 
         instance.addEventListener(Player.PLAYING, () => {
+          // Playing again — forget any recovery attempts.
+          recoveryAttemptRef.current = 0;
+          if (recoveryTimerRef.current !== null) {
+            clearTimeout(recoveryTimerRef.current);
+            recoveryTimerRef.current = null;
+          }
+          setRecovering(false);
+
           try {
             onQualitiesRef.current(instance.getQualities().map((q) => q.name));
           } catch {
@@ -116,7 +137,32 @@ export function Player({
 
         instance.addEventListener(Player.OFFLINE, () => {
           const current = loginRef.current;
-          if (current) onOfflineRef.current(current);
+          if (!current) return;
+
+          // Tell the server, which checks Helix and skips only if the channel
+          // really has ended. Independently, try to recover here: the embed is
+          // often wrong about this, and reloading the channel is exactly what
+          // refreshing the page was doing by hand.
+          onOfflineRef.current(current);
+
+          const attempt = recoveryAttemptRef.current;
+          const delay = RECOVERY_DELAYS_MS[attempt];
+          if (delay === undefined) return; // genuinely gone; stop trying
+
+          recoveryAttemptRef.current = attempt + 1;
+          setRecovering(true);
+
+          recoveryTimerRef.current = window.setTimeout(() => {
+            recoveryTimerRef.current = null;
+            const login = loginRef.current;
+            if (!login) return;
+            try {
+              instance.setChannel(login);
+              applyPrefs(instance, prefsRef.current);
+            } catch (err) {
+              console.warn('[player] recovery attempt failed:', err);
+            }
+          }, delay);
         });
 
         instance.addEventListener(Player.PLAYBACK_BLOCKED, () => {
@@ -147,6 +193,14 @@ export function Player({
   useEffect(() => {
     const instance = playerRef.current;
     if (!instance || !login) return;
+
+    // A pending recovery is for the old channel; drop it.
+    if (recoveryTimerRef.current !== null) {
+      clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    }
+    recoveryAttemptRef.current = 0;
+    setRecovering(false);
 
     instance.setChannel(login);
     // Twitch may reset volume and mute state on a channel change, and the
@@ -206,6 +260,13 @@ export function Player({
           <div className="glyph">▶</div>
           <strong>Nothing playing</strong>
           <p>Add a Twitch channel and it starts here for everyone.</p>
+        </div>
+      )}
+
+      {recovering && (
+        <div className="reconnecting">
+          <div className="spinner sm" />
+          <span>Stream dropped — reconnecting…</span>
         </div>
       )}
 
