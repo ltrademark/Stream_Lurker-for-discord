@@ -676,3 +676,17 @@ input[type='range']::-moz-range-thumb {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.url-box {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--purple-hi);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 20px;
+  user-select: all;
+}
+
+.boot h1 { margin: 0; }

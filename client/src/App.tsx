@@ -8,12 +8,14 @@ import { Participants } from './components/Participants.tsx';
 import { Player } from './components/Player.tsx';
 import { Queue } from './components/Queue.tsx';
 import { SignIn } from './components/SignIn.tsx';
+import { WrongPlace } from './components/WrongPlace.tsx';
 import { fetchMe, guildFromUrl, setGuildInUrl, signOut } from './lib/api.ts';
 import { loadPrefs, savePrefs, type Prefs } from './lib/prefs.ts';
 import { RoomSocket } from './lib/socket.ts';
 
 type Phase =
   | { name: 'booting' }
+  | { name: 'wrong-place' }
   | { name: 'signed-out' }
   | { name: 'picking'; me: Me }
   | { name: 'failed'; error: string }
@@ -40,6 +42,13 @@ export function App() {
 
   // --- who are we? ---------------------------------------------------------
   useEffect(() => {
+    // Loaded inside the Discord Activity sandbox rather than a browser tab.
+    // Nothing here can work, and the failure is silent, so stop early and say why.
+    if (location.hostname.endsWith('.discordsays.com')) {
+      setPhase({ name: 'wrong-place' });
+      return;
+    }
+
     let cancelled = false;
 
     fetchMe()
@@ -122,6 +131,8 @@ export function App() {
       </div>
     );
   }
+
+  if (phase.name === 'wrong-place') return <WrongPlace />;
 
   if (phase.name === 'signed-out') return <SignIn />;
 
