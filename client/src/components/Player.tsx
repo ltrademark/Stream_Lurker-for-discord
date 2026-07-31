@@ -123,7 +123,31 @@ export function Player({ login, prefs, onUnmute, onQualities, onOffline }: Props
         <div className="player-empty">
           <div className="glyph">!</div>
           <strong>The Twitch player couldn’t load</strong>
-          <p style={{ whiteSpace: 'pre-wrap', fontSize: 12, maxWidth: '46ch' }}>{error}</p>
+          {/*
+            Nearly always a content blocker rather than anything wrong here:
+            player.twitch.tv sits on common tracking blocklists, and in a page
+            served from another domain it counts as third-party. The request is
+            stopped inside the browser, so no amount of server-side work can
+            route around it — say so rather than showing a bare error.
+          */}
+          <p style={{ maxWidth: '44ch' }}>
+            This is usually an ad blocker or Firefox’s Enhanced Tracking Protection
+            blocking <code>player.twitch.tv</code>. Try the shield icon in the address bar,
+            or allow this site in your blocker.
+          </p>
+          <p className="fine">
+            To check: open{' '}
+            <a
+              href="https://player.twitch.tv/js/embed/v1.js"
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: 'var(--purple-hi)' }}
+            >
+              this script
+            </a>{' '}
+            in a new tab. If it loads there but not here, a blocker is the cause.
+          </p>
+          <p className="fine" style={{ opacity: 0.7 }}>{error}</p>
         </div>
       )}
 
